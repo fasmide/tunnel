@@ -109,25 +109,48 @@ func (s *Server) openForward(public net.Conn, host, class string) (*quic.Stream,
 	target.lastStreamID = int64(stream.StreamID())
 	h := wire.DataHeader{Name: host, RemoteAddr: public.RemoteAddr().String(), Scheme: class, ListenerID: member.ListenerID, Revision: strconv.FormatUint(m.revision, 10)}
 	m.mu.Unlock()
-	if err := stream.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
-		m.mu.Unlock()
-		return nil, nil, nil, fmt.Errorf("set data header deadline: %w", err)
+	release, err := s.initializeForward(target, f, stream, h)
+	if err != nil {
+		return nil, nil, nil, err
 	}
-	err = wire.WriteDataHeader(stream, h)
+	return stream, release, stats, nil
+}
+
+// forwardHeaderStream keeps header setup testable without racing a QUIC teardown.
+// Both cancellation methods are nonblocking, like their quic.Stream counterparts.
+type forwardHeaderStream interface {
+	io.Writer
+	SetWriteDeadline(time.Time) error
+	CancelRead(quic.StreamErrorCode)
+	CancelWrite(quic.StreamErrorCode)
+}
+
+func (s *Server) initializeForward(target *session, f *forwarding, stream forwardHeaderStream, h wire.DataHeader) (func(), error) {
+	m := s.manager
+	release := func() { stream.CancelRead(0); m.mu.Lock(); delete(target.active, f); m.mu.Unlock() }
+	abort := func() {
+		stream.CancelRead(5)
+		stream.CancelWrite(5)
+		m.mu.Lock()
+		delete(target.active, f)
+		m.mu.Unlock()
+	}
+	if err := stream.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		abort()
+		return nil, fmt.Errorf("set data header deadline: %w", err)
+	}
+	err := wire.WriteDataHeader(stream, h)
 	if clearErr := stream.SetWriteDeadline(time.Time{}); clearErr != nil && err == nil {
 		err = clearErr
 	}
 	m.mu.Lock()
 	f.initializing = false
 	m.mu.Unlock()
-	release := func() { stream.CancelRead(0); m.mu.Lock(); delete(target.active, f); m.mu.Unlock() }
 	if err != nil {
-		stream.CancelRead(5)
-		stream.CancelWrite(5)
-		release()
-		return nil, nil, nil, err
+		abort()
+		return nil, err
 	}
-	return stream, release, stats, nil
+	return release, nil
 }
 
 func relayRaw(ctx context.Context, public net.Conn, stream *quic.Stream, prefix []byte, stats *routeStats) error {
