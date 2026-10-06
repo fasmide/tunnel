@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/fasmide/tunnel"
-	"golang.org/x/net/http2"
 )
 
 // newHTTPProxy pins every backend dial to the validated loopback addresses.
@@ -145,10 +144,10 @@ func forwardHTTP(ctx context.Context, client *tunnel.Client, l net.Listener, add
 		},
 	}
 	// Serve (rather than ServeTLS) consumes locally handshaken *tls.Conn values.
-	// ConfigureServer explicitly installs HTTP/2 handling on this path.
-	if err := http2.ConfigureServer(app, &http2.Server{MaxConcurrentStreams: 128}); err != nil {
-		return fmt.Errorf("configure HTTP/2 server: %w", err)
-	}
+	app.Protocols = new(http.Protocols)
+	app.Protocols.SetHTTP1(true)
+	app.Protocols.SetHTTP2(true)
+	app.HTTP2 = &http.HTTP2Config{MaxConcurrentStreams: 128}
 	defer func() {
 		_ = app.Close()
 		mu.Lock()

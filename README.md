@@ -13,7 +13,7 @@ Use `tunnelproxy` with an existing loopback web service, or use the Go package t
 
 ## Try it
 
-You'll need Go 1.25 or newer, a public Linux server, and a hostname you control. This walkthrough uses:
+You'll need Go 1.27.1 or newer, a public Linux server, and a hostname you control. This walkthrough uses:
 
 - `tunnel.example.net` for the public server.
 - `app.tunnel.example.net` for your application.

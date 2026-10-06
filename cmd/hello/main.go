@@ -18,7 +18,6 @@ import (
 	"github.com/fasmide/tunnel"
 	"github.com/fasmide/tunnel/internal/cli"
 	"github.com/spf13/cobra"
-	"golang.org/x/net/http2"
 )
 
 func main() {
@@ -130,9 +129,9 @@ func newCommand() *cobra.Command {
 
 		app := &http.Server{Handler: helloHandler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
 		// Listener connections have already completed TLS. Serve, not ServeTLS.
-		if err := http2.ConfigureServer(app, &http2.Server{}); err != nil {
-			return fmt.Errorf("configure HTTP/2 server: %w", err)
-		}
+		app.Protocols = new(http.Protocols)
+		app.Protocols.SetHTTP1(true)
+		app.Protocols.SetHTTP2(true)
 		defer func() { _ = app.Close() }()
 		served := make(chan error, 1)
 		go func() { served <- app.Serve(listener) }()
