@@ -19,9 +19,9 @@ import (
 	"testing"
 	"time"
 
-	"tunnel"
-	"tunnel/internal/server"
-	"tunnel/internal/transportpki"
+	"github.com/fasmide/tunnel"
+	"github.com/fasmide/tunnel/internal/server"
+	"github.com/fasmide/tunnel/internal/transportpki"
 )
 
 func TestParseAndLoopbackPolicy(t *testing.T) {

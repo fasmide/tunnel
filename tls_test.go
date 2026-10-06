@@ -24,9 +24,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fasmide/tunnel/internal/wire"
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
-	"tunnel/internal/wire"
 )
 
 func servePlainApplication(t *testing.T, l net.Listener) {
@@ -363,7 +363,9 @@ func TestACMEIssuanceThroughTunnelAndCachedRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = c.Close() })
-	l, err := c.Listen(ctx, "alice.example.com")
+	setup, stopSetup := context.WithCancel(ctx)
+	l, err := c.Listen(setup, "alice.example.com")
+	stopSetup() // Issuance must survive cancellation of the listener setup context.
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +409,9 @@ func TestACMEIssuanceThroughTunnelAndCachedRestart(t *testing.T) {
 			t.Error(err)
 		}
 	})
-	l2, err := c2.Listen(ctx, "alice.example.com")
+	setup2, stopSetup2 := context.WithCancel(ctx)
+	l2, err := c2.Listen(setup2, "alice.example.com")
+	stopSetup2() // Cached certificates must also survive setup cancellation.
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fasmide/tunnel"
 	"golang.org/x/net/http2"
-	"tunnel"
 )
 
 // newHTTPProxy pins every backend dial to the validated loopback addresses.

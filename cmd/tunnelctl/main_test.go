@@ -8,25 +8,22 @@ import (
 	"strings"
 	"testing"
 
-	"tunnel/internal/server"
+	"github.com/fasmide/tunnel/internal/server"
 )
 
 func TestAdminSocketSelection(t *testing.T) {
-	for _, tc := range []struct {
-		socket, state string
-		explicit      bool
-		want          string
-	}{{"/run/tunneld/admin.sock", "", false, "/run/tunneld/admin.sock"}, {"/custom/admin.sock", "", true, "/custom/admin.sock"}, {"/run/tunneld/admin.sock", "/legacy/state", false, "/legacy/state/admin.sock"}} {
-		got, err := adminSocketPath(tc.socket, tc.state, tc.explicit)
-		if err != nil || got != tc.want {
-			t.Fatalf("got %s %v want %s", got, err, tc.want)
+	cfg, err := parse(nil)
+	if err != nil || cfg.socket != "/run/tunneld/admin.sock" {
+		t.Fatalf("default socket: %+v %v", cfg, err)
+	}
+	cfg, err = parse([]string{"--socket", "/custom/admin.sock"})
+	if err != nil || cfg.socket != "/custom/admin.sock" {
+		t.Fatalf("custom socket: %+v %v", cfg, err)
+	}
+	for _, args := range [][]string{{"--socket", ""}, {"--state", "/legacy"}, {"routes", "--state", "/legacy"}} {
+		if _, err := parse(args); err == nil {
+			t.Fatalf("accepted %v", args)
 		}
-	}
-	if _, err := adminSocketPath("/custom/socket", "/legacy", true); err == nil {
-		t.Fatal("ambiguous flags accepted")
-	}
-	if _, err := adminSocketPath("", "", true); err == nil {
-		t.Fatal("empty socket accepted")
 	}
 }
 
@@ -38,19 +35,15 @@ func TestParse(t *testing.T) {
 	if cfg.socket != "/tmp/admin.sock" || cfg.request.Command != "invites" {
 		t.Fatalf("unexpected config: %+v", cfg)
 	}
-	cfg, err = parse([]string{"--state", "/legacy", "approve", "abc"})
+	cfg, err = parse([]string{"--socket", "/custom/admin.sock", "approve", "abc"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.socket != "/legacy/admin.sock" || cfg.request.Command != "approve" || cfg.request.ID != "abc" {
+	if cfg.socket != "/custom/admin.sock" || cfg.request.Command != "approve" || cfg.request.ID != "abc" {
 		t.Fatalf("unexpected config: %+v", cfg)
 	}
-	cfg, err = parse([]string{"-a", "routes"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !cfg.all || cfg.request.Command != "routes" {
-		t.Fatalf("unexpected routes --all config: %+v", cfg)
+	if _, err := parse([]string{"-a", "routes"}); err == nil {
+		t.Fatal("accepted routes-only flag before subcommand")
 	}
 	cfg, err = parse([]string{"routes", "--all"})
 	if err != nil {
@@ -106,7 +99,7 @@ func TestParse(t *testing.T) {
 			t.Fatalf("accepted %v", args)
 		}
 	}
-	cfg, err = parse([]string{"--replace", "approve", "abc"})
+	cfg, err = parse([]string{"approve", "abc", "--replace"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -19,9 +19,9 @@ import (
 	"sync"
 	"time"
 
-	"tunnel/internal/names"
-	"tunnel/internal/transportpki"
-	"tunnel/internal/wire"
+	"github.com/fasmide/tunnel/internal/names"
+	"github.com/fasmide/tunnel/internal/transportpki"
+	"github.com/fasmide/tunnel/internal/wire"
 )
 
 type privateCertificate struct {

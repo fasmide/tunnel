@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"tunnel"
-	"tunnel/internal/transportpki"
+	"github.com/fasmide/tunnel"
+	"github.com/fasmide/tunnel/internal/transportpki"
 )
 
 func TestConstrainedCAAndRenewal(t *testing.T) {

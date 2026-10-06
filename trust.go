@@ -16,9 +16,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fasmide/tunnel/internal/transportpki"
+	"github.com/fasmide/tunnel/internal/wire"
 	quic "github.com/quic-go/quic-go"
-	"tunnel/internal/transportpki"
-	"tunnel/internal/wire"
 )
 
 // TrustRequest explicitly selects fingerprint verification or first-use trust.

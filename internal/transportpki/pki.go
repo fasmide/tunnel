@@ -24,7 +24,7 @@ import (
 	"sync"
 	"time"
 
-	"tunnel/internal/names"
+	"github.com/fasmide/tunnel/internal/names"
 )
 
 type Storage interface {

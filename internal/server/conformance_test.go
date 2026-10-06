@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fasmide/tunnel/internal/wire"
 	quic "github.com/quic-go/quic-go"
-	"tunnel/internal/wire"
 )
 
 func TestConformanceControlRejectsMalformedFrames(t *testing.T) {

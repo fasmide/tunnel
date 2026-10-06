@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"tunnel/internal/server"
+	"github.com/fasmide/tunnel/internal/server"
 )
 
 func eventually(t *testing.T, check func() bool) {

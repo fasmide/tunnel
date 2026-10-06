@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"time"
 
-	"tunnel/internal/wire"
+	"github.com/fasmide/tunnel/internal/wire"
 )
 
 type StateStorage interface {

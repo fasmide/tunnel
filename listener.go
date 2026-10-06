@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"tunnel/internal/names"
-	"tunnel/internal/streamconn"
-	"tunnel/internal/wire"
+	"github.com/fasmide/tunnel/internal/names"
+	"github.com/fasmide/tunnel/internal/streamconn"
+	"github.com/fasmide/tunnel/internal/wire"
 )
 
 type rawListener struct {
@@ -131,8 +131,8 @@ func (l *rawListener) deliver(conn net.Conn) bool {
 
 type tunnelAddr string
 
-func (a tunnelAddr) Network() string                          { return "tcp" }
-func (a tunnelAddr) String() string                           { return string(a) }
+func (a tunnelAddr) Network() string { return "tcp" }
+func (a tunnelAddr) String() string  { return string(a) }
 func (c *Client) ListenRaw(ctx context.Context, name string) (net.Listener, error) {
 	return c.listen(ctx, name, "raw", nil)
 }

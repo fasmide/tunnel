@@ -15,10 +15,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fasmide/tunnel/internal/names"
+	"github.com/fasmide/tunnel/internal/streamconn"
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
-	"tunnel/internal/names"
-	"tunnel/internal/streamconn"
 )
 
 // WithACMEClient selects an alternate ACME directory/HTTP transport (e.g. a
@@ -79,7 +79,8 @@ func (c *Client) Listen(ctx context.Context, name string) (net.Listener, error) 
 	// Check policy even for cached certificates: autocert's HostPolicy is only
 	// consulted for issuance and would otherwise allow a stale cached grant.
 	get := config.GetCertificate
-	config.GetCertificate = c.acmeGetCertificate(ctx, get)
+	// Certificate issuance outlives Listen's setup context, just like the client.
+	config.GetCertificate = c.acmeGetCertificate(c.ctx, get) //nolint:contextcheck // Use client lifetime, not the short-lived setup context.
 	return c.listen(ctx, name, "acme", config)
 }
 func (c *Client) acmeGetCertificate(ctx context.Context, get func(*tls.ClientHelloInfo) (*tls.Certificate, error)) func(*tls.ClientHelloInfo) (*tls.Certificate, error) {

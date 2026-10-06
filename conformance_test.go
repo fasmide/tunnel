@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"tunnel/internal/server"
+	"github.com/fasmide/tunnel/internal/server"
 )
 
 // These named acceptance cases deliberately exercise public TCP + real QUIC,

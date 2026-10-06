@@ -16,8 +16,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/fasmide/tunnel/internal/wire"
 	quic "github.com/quic-go/quic-go"
-	"tunnel/internal/wire"
 )
 
 type JoinRequest struct {

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"tunnel/internal/server"
+	"github.com/fasmide/tunnel/internal/server"
 )
 
 func BenchmarkE2ETLSRequest(b *testing.B) {

@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	"tunnel/internal/wire"
+	"github.com/fasmide/tunnel/internal/wire"
 )
 
 // verifyIdentity validates the leaf independently of route approval. TLS itself

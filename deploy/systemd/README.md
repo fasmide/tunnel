@@ -84,8 +84,7 @@ prefer the canonical `/run/tunneld/admin.sock` and `/run/tunneld/pprof.sock`
 paths. Both sockets are 0600. Use root for host-side admin/profile access
 rather than granting broad directory/socket access. tunnelctl defaults to the
 admin socket and never reads state files; `-s PATH` / `--socket PATH` overrides
-it, while legacy `--state DIR` means DIR/admin.sock and cannot be combined with
-`--socket`:
+it:
 
 
 ```sh

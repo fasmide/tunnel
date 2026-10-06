@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"tunnel/internal/server"
+	"github.com/fasmide/tunnel/internal/server"
 )
 
 func applicationCertificate(t testing.TB) (tls.Certificate, *x509.CertPool) {

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"tunnel/internal/wire"
+	"github.com/fasmide/tunnel/internal/wire"
 )
 
 func (c *Client) unadvertise(ctx context.Context, s *clientSession, id string) (int64, error) {

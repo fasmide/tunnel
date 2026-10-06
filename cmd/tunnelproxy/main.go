@@ -10,7 +10,6 @@ import (
 	"io/fs"
 	"log"
 	"net"
-	"net/netip"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -20,8 +19,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/spf13/pflag"
-	"tunnel"
+	"github.com/fasmide/tunnel"
+	"github.com/fasmide/tunnel/internal/cli"
+	"github.com/spf13/cobra"
 )
 
 type config struct {
@@ -30,15 +30,14 @@ type config struct {
 	setupTimeout, drainTimeout, dialTimeout                                               time.Duration
 }
 
-func parse(args []string) (config, error) {
-	c := config{mode: "acme", setupTimeout: 30 * time.Second, drainTimeout: 30 * time.Second, dialTimeout: 10 * time.Second}
-	if len(args) == 0 || args[0] != "join" && args[0] != "serve" && args[0] != "joinserve" {
-		return c, errors.New("usage: tunnelproxy join|serve|joinserve [flags]")
+func newCommand(c *config, action func(config) error) *cobra.Command {
+	*c = config{mode: "acme", setupTimeout: 30 * time.Second, drainTimeout: 30 * time.Second, dialTimeout: 10 * time.Second}
+	root := &cobra.Command{
+		Use: "tunnelproxy", Short: "Expose a loopback web service through your tunnel server",
+		Long:         "Connect outward to a tunnel daemon and expose a loopback service.\nAccess requires an approved identity; HTTPS terminates on this machine.",
+		SilenceUsage: true, SilenceErrors: true,
 	}
-	flags := pflag.NewFlagSet("tunnelproxy "+c.command, pflag.ContinueOnError)
-	flags.SetInterspersed(false)
-	flags.Usage = func() {}
-	c.command = args[0]
+	flags := root.PersistentFlags()
 	flags.StringVarP(&c.server, "server", "s", "", "daemon QUIC hostname or host:port (default port 7443)")
 	flags.StringVarP(&c.name, "name", "n", "", "approved public name/subtree")
 	flags.StringVar(&c.state, "state", "", "private state directory (Linux: $XDG_CONFIG_HOME/tunnelproxy or ~/.config/tunnelproxy)")
@@ -46,17 +45,63 @@ func parse(args []string) (config, error) {
 	flags.StringVarP(&c.fingerprint, "fingerprint", "f", "", "bootstrap constrained CA using administrator SHA-256 hex fingerprint")
 	flags.BoolVar(&c.tofu, "tofu", false, "explicitly trust first constrained CA; first contact can be intercepted")
 	flags.DurationVar(&c.setupTimeout, "setup-timeout", c.setupTimeout, "join/dial setup deadline")
-	flags.StringVarP(&c.target, "target", "t", "", "loopback TCP service, e.g. 127.0.0.1:8080 (serve only)")
-	flags.StringVarP(&c.mode, "mode", "m", c.mode, "public mode: acme, private, byo, raw, http (serve only)")
-	flags.StringVar(&c.cert, "cert", "", "public certificate PEM for byo mode, not transport TLS")
-	flags.StringVar(&c.key, "key", "", "public private-key PEM for byo mode")
-	flags.StringVar(&c.email, "acme-email", "", "ACME contact email (acme mode)")
-	flags.DurationVar(&c.drainTimeout, "drain-timeout", c.drainTimeout, "SIGINT/SIGTERM drain deadline (serve only)")
-	flags.DurationVar(&c.dialTimeout, "target-timeout", c.dialTimeout, "local TCP dial deadline (serve only)")
-	if err := flags.Parse(args[1:]); err != nil {
-		return c, fmt.Errorf("parse flags: %w", err)
+	for _, spec := range []struct{ name, short string }{
+		{"join", "Submit an access request and exit"},
+		{"serve", "Serve using an existing approved identity"},
+		{"joinserve", "Request access, wait for approval, then serve"},
+	} {
+		child := &cobra.Command{Use: spec.name, Short: spec.short, Args: cobra.NoArgs,
+			Example: "  tunnelproxy " + spec.name + " --server tunnel.example.net --name app.tunnel.example.net --fingerprint SHA256"}
+		if spec.name != "join" {
+			child.Example += " --target 127.0.0.1:8080"
+			serving := child.Flags()
+			serving.StringVarP(&c.target, "target", "t", "", "loopback TCP service, e.g. 127.0.0.1:8080")
+			serving.StringVarP(&c.mode, "mode", "m", "acme", "public mode: acme, private, byo, raw, http")
+			serving.StringVar(&c.cert, "cert", "", "public certificate PEM for byo mode, not transport TLS")
+			serving.StringVar(&c.key, "key", "", "public private-key PEM for byo mode")
+			serving.StringVar(&c.email, "acme-email", "", "ACME contact email (acme mode)")
+			serving.DurationVar(&c.drainTimeout, "drain-timeout", 30*time.Second, "SIGINT/SIGTERM drain deadline")
+			serving.DurationVar(&c.dialTimeout, "target-timeout", 10*time.Second, "local TCP dial deadline")
+			_ = child.MarkFlagRequired("target")
+			_ = child.MarkFlagFilename("cert", "pem", "crt")
+			_ = child.MarkFlagFilename("key", "pem", "key")
+			_ = child.RegisterFlagCompletionFunc("mode", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+				return []string{"acme", "private", "byo", "raw", "http"}, cobra.ShellCompDirectiveNoFileComp
+			})
+		}
+		child.RunE = func(cmd *cobra.Command, args []string) error {
+			c.command = cmd.Name()
+			validated, err := validateConfig(*c)
+			if err != nil {
+				return err
+			}
+			*c = validated
+			return action(validated)
+		}
+		root.AddCommand(child)
 	}
-	if flags.NArg() != 0 || c.server == "" || c.name == "" {
+	_ = root.MarkPersistentFlagDirname("state")
+	cli.AddCompletion(root)
+	return root
+}
+
+//nolint:unused // Used by tests, which are excluded from linting.
+func parse(args []string) (config, error) {
+	var c config
+	called := false
+	cmd := newCommand(&c, func(config) error { called = true; return nil })
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs(args)
+	err := cmd.Execute()
+	if err == nil && !called {
+		err = errors.New("usage: tunnelproxy join|serve|joinserve [flags]")
+	}
+	return c, err
+}
+
+func validateConfig(c config) (config, error) {
+	if c.server == "" || c.name == "" {
 		return c, errors.New("-s, --server and -n, --name are required; no positional arguments")
 	}
 	var err error
@@ -104,37 +149,12 @@ func parse(args []string) (config, error) {
 	return c, nil
 }
 
-// Normalize before deriving saved trust/join keys, so host and host:7443
-// address the same persisted endpoint. Bare IPv6 is accepted without a port;
-// use brackets to specify an explicit IPv6 port.
 func serverAddress(address string) (string, error) {
-	host, port, err := net.SplitHostPort(address)
+	address, err := cli.ServerAddress(address)
 	if err != nil {
-		switch {
-		case strings.HasPrefix(address, "[") && strings.HasSuffix(address, "]"):
-			host = strings.TrimSuffix(strings.TrimPrefix(address, "["), "]")
-			ip, e := netip.ParseAddr(host)
-			if e != nil || !ip.Is6() {
-				return "", errors.New("invalid bracketed IPv6 address")
-			}
-		case !strings.Contains(address, ":"):
-			host = address
-		default:
-			if _, e := netip.ParseAddr(address); e != nil {
-				return "", fmt.Errorf("split server host/port: %w", err)
-			}
-			host = address
-		}
-		port = "7443"
+		return "", fmt.Errorf("normalize server address: %w", err)
 	}
-	if host == "" || strings.ContainsAny(host, " /\\\t\r\n?#[]") {
-		return "", errors.New("invalid server host")
-	}
-	n, err := strconv.Atoi(port)
-	if err != nil || n < 1 || n > 65535 {
-		return "", errors.New("server port must be 1..65535")
-	}
-	return net.JoinHostPort(host, strconv.Itoa(n)), nil
+	return address, nil
 }
 
 func transportConfig(ctx context.Context, c config, storage tunnel.Storage, out io.Writer) (*tls.Config, error) {
@@ -298,18 +318,23 @@ func main() {
 		}
 	}()
 	if err := run(ctx, os.Args[1:], os.Stdout); err != nil {
-		if errors.Is(err, pflag.ErrHelp) {
-			return
-		}
 		log.Print(err)
 		exitCode = 1
 	}
 }
 func run(ctx context.Context, args []string, out io.Writer) error {
-	c, err := parse(args)
-	if err != nil {
-		return err
+	var c config
+	cmd := newCommand(&c, func(c config) error { return executeConfig(ctx, c, out) })
+	cmd.SetArgs(args)
+	cmd.SetOut(out)
+	cmd.SetErr(out)
+	if err := cmd.ExecuteContext(ctx); err != nil {
+		return fmt.Errorf("tunnelproxy: %w", err)
 	}
+	return nil
+}
+
+func executeConfig(ctx context.Context, c config, out io.Writer) error {
 	storage := tunnel.FileStorage(c.state)
 	setup, cancel := context.WithTimeout(ctx, c.setupTimeout)
 	defer cancel()
@@ -357,15 +382,7 @@ func runServe(ctx, setup context.Context, c config, trust *tls.Config, out io.Wr
 		_ = client.Close()
 		return fmt.Errorf("create listener: %w", err)
 	}
-	defer func() { _ = client.Close() }()
-	defer func() { _ = l.Close() }()
-	if _, err := fmt.Fprintf(out, "serving %s (%s) -> %s\n", c.name, c.mode, c.target); err != nil {
-		return fmt.Errorf("write serve banner: %w", err)
-	}
-	if c.mode == "raw" {
-		return forward(ctx, client, l, addresses, c.dialTimeout, c.drainTimeout, out)
-	}
-	return forwardHTTP(ctx, client, l, addresses, c.dialTimeout, c.drainTimeout, c.mode == "http", out)
+	return serveClient(ctx, c, client, l, addresses, out)
 }
 
 func runJoinServe(ctx context.Context, c config, trust *tls.Config, join tunnel.JoinWaitOptions, out io.Writer) error {
@@ -375,11 +392,18 @@ func runJoinServe(ctx context.Context, c config, trust *tls.Config, join tunnel.
 	if err != nil {
 		return fmt.Errorf("-target: %w", err)
 	}
-	listen := func(ctx context.Context, client *tunnel.Client) (net.Listener, error) { return listener(ctx, c, client) }
+	listen := func(ctx context.Context, client *tunnel.Client) (net.Listener, error) {
+		return listener(ctx, c, client)
+	}
 	l, client, err := tunnel.EnsureJoinedAndListen(ctx, c.server, join, listen, tunnel.WithTLSConfig(trust), tunnel.WithACMEEmail(c.email))
 	if err != nil {
 		return fmt.Errorf("ensure joined and listen: %w", err)
 	}
+	return serveClient(ctx, c, client, l, addresses, out)
+}
+
+// serveClient owns the client and listener once either setup path succeeds.
+func serveClient(ctx context.Context, c config, client *tunnel.Client, l net.Listener, addresses []string, out io.Writer) error {
 	defer func() { _ = client.Close() }()
 	defer func() { _ = l.Close() }()
 	if _, err := fmt.Fprintf(out, "serving %s (%s) -> %s\n", c.name, c.mode, c.target); err != nil {

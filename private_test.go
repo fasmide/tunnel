@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"tunnel/internal/server"
-	"tunnel/internal/transportpki"
-	"tunnel/internal/wire"
+	"github.com/fasmide/tunnel/internal/server"
+	"github.com/fasmide/tunnel/internal/transportpki"
+	"github.com/fasmide/tunnel/internal/wire"
 )
 
 func privateClient(t *testing.T) (*Client, *server.Server, *server.Manager, *transportpki.Authority, Storage) {

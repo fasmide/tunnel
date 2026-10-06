@@ -9,21 +9,19 @@ import (
 	"net"
 	"net/netip"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 
-	"github.com/spf13/pflag"
-	"tunnel"
-	"tunnel/internal/server"
+	"github.com/fasmide/tunnel"
+	"github.com/fasmide/tunnel/internal/cli"
+	"github.com/fasmide/tunnel/internal/server"
+	"github.com/spf13/cobra"
 )
 
 type config struct {
 	socket, server, serverName string
-	state                      string
-	socketSet                  bool
 	replace                    bool
 	all                        bool
 	fullID                     bool
@@ -31,46 +29,74 @@ type config struct {
 	request                    server.AdminRequest
 }
 
-func adminSocketPath(socket, state string, socketSet bool) (string, error) {
-	if state != "" {
-		if socketSet {
-			return "", fmt.Errorf("choose -s, --socket or legacy --state, not both")
-		}
-		return filepath.Join(state, "admin.sock"), nil
-	}
-	if socket == "" {
-		return "", fmt.Errorf("-s, --socket cannot be empty")
-	}
-	return socket, nil
-}
-
-func parse(args []string) (config, error) {
-	c := config{}
-	flags := pflag.NewFlagSet("tunnelctl", pflag.ContinueOnError)
-	flags.Usage = func() {}
-	flags.StringVar(&c.state, "state", "", "legacy shortcut for DIR/admin.sock; cannot combine with --socket")
+func newCommand(c *config, action func(config) error) *cobra.Command {
+	root := &cobra.Command{Use: "tunnelctl", Short: "Manage tunnel identities and routes",
+		Long:    "Administer a running daemon through its local Unix socket.\nWith no subcommand, show routes. Obtain fingerprints locally for trusted distribution.",
+		Example: "  tunnelctl invites\n  tunnelctl approve INVITE_ID\n  tunnelctl routes --all",
+		Args:    cobra.NoArgs, SilenceUsage: true, SilenceErrors: true}
+	flags := root.PersistentFlags()
 	flags.StringVarP(&c.socket, "socket", "s", "/run/tunneld/admin.sock", "daemon admin Unix socket")
 	flags.StringVar(&c.server, "server", "", "daemon QUIC hostname or host:port for fingerprint")
 	flags.StringVar(&c.serverName, "server-name", "", "transport TLS DNS name override for fingerprint, e.g. when dialing an IP")
-	flags.BoolVar(&c.replace, "replace", false, "for approve: revoke conflicting owners first")
-	flags.BoolVarP(&c.all, "all", "a", false, "for routes: include revoked identities")
-	flags.BoolVar(&c.fullID, "full-id", false, "for routes: show full identity values")
-	flags.BoolVar(&c.jsonOutput, "json", false, "for routes: emit JSON instead of a table")
-	if err := flags.Parse(args); err != nil {
-		return c, fmt.Errorf("parse flags: %w", err)
-	}
-	flags.Visit(func(f *pflag.Flag) {
-		if f.Name == "socket" {
-			c.socketSet = true
+	flags.BoolVar(&c.jsonOutput, "json", false, "emit JSON output")
+	execute := func(cmd *cobra.Command, args []string) error {
+		name := cmd.Name()
+		if cmd == root {
+			name = "routes"
 		}
-	})
-	path, err := adminSocketPath(c.socket, c.state, c.socketSet)
-	if err != nil {
-		return c, err
+		validated, err := validateConfig(*c, append([]string{name}, args...))
+		if err != nil {
+			return err
+		}
+		*c = validated
+		return action(validated)
 	}
-	remaining := flags.Args()
-	if len(remaining) == 0 {
-		remaining = []string{"routes"}
+	root.RunE = execute
+	for _, spec := range []struct {
+		use, short string
+		args       cobra.PositionalArgs
+	}{
+		{"routes", "Show authorized routes and live clients", cobra.NoArgs},
+		{"invites", "List access requests awaiting a decision", cobra.NoArgs},
+		{"approve INVITE_ID", "Approve an access request", cobra.ExactArgs(1)},
+		{"reject INVITE_ID", "Reject an access request", cobra.ExactArgs(1)},
+		{"revoke IDENTITY_ID", "Revoke an identity and disconnect its clients", cobra.ExactArgs(1)},
+		{"set-routes IDENTITY_ID [HOSTNAME...]", "Replace an identity's hostname grants (omit names to clear)", cobra.MinimumNArgs(1)},
+		{"fingerprint", "Print the daemon CA fingerprint", cobra.NoArgs},
+	} {
+		child := &cobra.Command{Use: spec.use, Short: spec.short, Args: spec.args, RunE: execute}
+		if child.Name() == "approve" {
+			child.Flags().BoolVar(&c.replace, "replace", false, "revoke conflicting owners first")
+		}
+		if spec.use == "routes" {
+			child.Flags().BoolVarP(&c.all, "all", "a", false, "include revoked identities")
+			child.Flags().BoolVar(&c.fullID, "full-id", false, "show full identity values")
+		}
+		if spec.use == "fingerprint" {
+			child.Long = "Print the local daemon's CA fingerprint, or fetch one with --server.\nA remotely fetched fingerprint is not verified: compare it through a trusted channel."
+		}
+		root.AddCommand(child)
+	}
+	cli.AddCompletion(root)
+	return root
+}
+
+//nolint:unused // Used by tests, which are excluded from linting.
+func parse(args []string) (config, error) {
+	var c config
+	cmd := newCommand(&c, func(config) error { return nil })
+	cmd.SetArgs(args)
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	if err := cmd.Execute(); err != nil {
+		return c, fmt.Errorf("parse tunnelctl command: %w", err)
+	}
+	return c, nil
+}
+
+func validateConfig(c config, remaining []string) (config, error) {
+	if c.socket == "" {
+		return c, fmt.Errorf("-s, --socket cannot be empty")
 	}
 	c.request = server.AdminRequest{Command: remaining[0], Routes: []string{}}
 	switch remaining[0] {
@@ -94,6 +120,7 @@ func parse(args []string) (config, error) {
 			return c, fmt.Errorf("unexpected arguments")
 		}
 		if c.server != "" {
+			var err error
 			c.server, err = fingerprintServerAddress(c.server)
 			if err != nil {
 				return c, fmt.Errorf("--server: %w", err)
@@ -102,24 +129,29 @@ func parse(args []string) (config, error) {
 	default:
 		return c, fmt.Errorf("unknown command %s", remaining[0])
 	}
-	c.socket = path
 	return c, nil
 }
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr, os.Stdin); err != nil {
-		if errors.Is(err, pflag.ErrHelp) {
-			return
-		}
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 func run(args []string, stdout, stderr *os.File, stdin io.Reader) error {
-	c, err := parse(args)
-	if err != nil {
-		return err
+	var c config
+	cmd := newCommand(&c, func(c config) error { return executeConfig(c, stdout, stderr, stdin) })
+	cmd.SetArgs(args)
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+	cmd.SetIn(stdin)
+	if err := cmd.Execute(); err != nil {
+		return fmt.Errorf("tunnelctl: %w", err)
 	}
+	return nil
+}
+
+func executeConfig(c config, stdout, stderr *os.File, stdin io.Reader) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if c.request.Command == "fingerprint" {
@@ -128,19 +160,13 @@ func run(args []string, stdout, stderr *os.File, stdin io.Reader) error {
 			if err != nil {
 				return fmt.Errorf("fetch transport trust: %w", err)
 			}
-			if _, err = fmt.Fprintln(stdout, trust.Fingerprint); err != nil {
-				return fmt.Errorf("write transport fingerprint: %w", err)
-			}
-			return nil
+			return writeFingerprint(stdout, trust.Fingerprint, c.jsonOutput)
 		}
 		result, err := server.AdminCall(ctx, c.socket, c.request)
 		if err != nil {
 			return fmt.Errorf("request daemon fingerprint: %w", err)
 		}
-		if _, err = fmt.Fprintln(stdout, result.Fingerprint); err != nil {
-			return fmt.Errorf("write daemon fingerprint: %w", err)
-		}
-		return nil
+		return writeFingerprint(stdout, result.Fingerprint, c.jsonOutput)
 	}
 	result, err := adminRun(ctx, c, stderr, stdin)
 	if err != nil {
@@ -170,10 +196,22 @@ func run(args []string, stdout, stderr *os.File, stdin io.Reader) error {
 		}
 		return nil
 	}
-	encoder := json.NewEncoder(stdout)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(result); err != nil {
-		return fmt.Errorf("encode admin result: %w", err)
+	return writeAdminResult(stdout, c, result)
+}
+
+func writeFingerprint(out io.Writer, fingerprint string, jsonOutput bool) error {
+	if jsonOutput {
+		encoder := json.NewEncoder(out)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(struct {
+			Fingerprint string `json:"fingerprint"`
+		}{Fingerprint: fingerprint}); err != nil {
+			return fmt.Errorf("encode fingerprint: %w", err)
+		}
+		return nil
+	}
+	if _, err := fmt.Fprintln(out, fingerprint); err != nil {
+		return fmt.Errorf("write fingerprint: %w", err)
 	}
 	return nil
 }

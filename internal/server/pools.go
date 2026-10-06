@@ -15,8 +15,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"tunnel/internal/names"
-	"tunnel/internal/wire"
+	"github.com/fasmide/tunnel/internal/names"
+	"github.com/fasmide/tunnel/internal/wire"
 
 	quic "github.com/quic-go/quic-go"
 )

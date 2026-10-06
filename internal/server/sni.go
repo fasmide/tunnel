@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"tunnel/internal/names"
+	"github.com/fasmide/tunnel/internal/names"
 )
 
 const maxClientHello = 256 * 1024

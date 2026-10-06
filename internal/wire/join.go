@@ -12,7 +12,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"tunnel/internal/names"
+	"github.com/fasmide/tunnel/internal/names"
 )
 
 type JoinPayload struct {

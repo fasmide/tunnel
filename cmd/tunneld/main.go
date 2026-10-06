@@ -2,8 +2,8 @@ package main
 
 import (
 	"crypto/tls"
-	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -11,11 +11,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/spf13/pflag"
+	"github.com/fasmide/tunnel"
+	"github.com/fasmide/tunnel/internal/cli"
+	"github.com/fasmide/tunnel/internal/server"
+	"github.com/fasmide/tunnel/internal/transportpki"
+	"github.com/spf13/cobra"
 	"golang.org/x/sys/unix"
-	"tunnel"
-	"tunnel/internal/server"
-	"tunnel/internal/transportpki"
 )
 
 type config struct {
@@ -23,10 +24,12 @@ type config struct {
 	exportCA                                                                            bool
 }
 
-func parse(args []string) (config, error) {
-	c := config{}
-	flags := pflag.NewFlagSet("tunneld", pflag.ContinueOnError)
-	flags.Usage = func() {}
+func newCommand(c *config, action func(config) error) *cobra.Command {
+	cmd := &cobra.Command{Use: "tunneld", Short: "Run the public reverse tunnel server",
+		Long:    "Route public HTTP and TLS traffic to approved clients over QUIC.\nChoose a generated constrained CA (--domain) or a transport certificate (--cert/--key).",
+		Example: "  tunneld --domain tunnel.example.net\n  tunneld --domain tunnel.example.net --export-ca",
+		Args:    cobra.NoArgs, SilenceUsage: true, SilenceErrors: true}
+	flags := cmd.Flags()
 	flags.StringVarP(&c.stateDir, "state", "s", "/var/lib/tunneld", "private persistent state directory")
 	flags.StringVar(&c.socketPath, "socket", "/run/tunneld/admin.sock", "local admin Unix socket; parent must be private and owned by daemon user")
 	flags.StringVar(&c.pprofPath, "pprof-socket", "/run/tunneld/pprof.sock", "local pprof HTTP Unix socket; parent must be private and owned by daemon user")
@@ -37,40 +40,62 @@ func parse(args []string) (config, error) {
 	flags.StringVarP(&c.keyPath, "key", "k", "", "QUIC transport private key PEM")
 	flags.StringVarP(&c.domain, "domain", "d", "", "transport DNS base name; generates a constrained CA when --cert/--key are absent")
 	flags.BoolVar(&c.exportCA, "export-ca", false, "print saved generated CA as PEM and exit; requires --domain")
-	if err := flags.Parse(args); err != nil {
-		return c, fmt.Errorf("parse flags: %w", err)
+	cmd.RunE = func(cmd *cobra.Command, args []string) error {
+		if err := validateConfig(*c); err != nil {
+			return err
+		}
+		return action(*c)
 	}
-	if flags.NArg() != 0 {
-		return c, fmt.Errorf("no positional arguments expected")
-	}
-	if (c.certPath == "") != (c.keyPath == "") {
-		return c, fmt.Errorf("--cert and --key must be supplied together")
-	}
-	if c.certPath != "" && (c.domain != "" || c.exportCA) {
-		return c, fmt.Errorf("choose --cert/--key or generated --domain mode, not both")
-	}
-	if c.certPath == "" && c.domain == "" {
-		return c, fmt.Errorf("--domain is required when --cert/--key are absent")
+	_ = cmd.MarkFlagDirname("state")
+	_ = cmd.MarkFlagFilename("cert", "pem", "crt")
+	_ = cmd.MarkFlagFilename("key", "pem", "key")
+	cli.AddCompletion(cmd)
+	return cmd
+}
+
+//nolint:unused // Used by tests, which are excluded from linting.
+func parse(args []string) (config, error) {
+	var c config
+	cmd := newCommand(&c, func(config) error { return nil })
+	cmd.SetArgs(args)
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	if err := cmd.Execute(); err != nil {
+		return c, fmt.Errorf("parse tunneld command: %w", err)
 	}
 	return c, nil
 }
 
+func validateConfig(c config) error {
+	if (c.certPath == "") != (c.keyPath == "") {
+		return fmt.Errorf("--cert and --key must be supplied together")
+	}
+	if c.certPath != "" && (c.domain != "" || c.exportCA) {
+		return fmt.Errorf("choose --cert/--key or generated --domain mode, not both")
+	}
+	if c.certPath == "" && c.domain == "" {
+		return fmt.Errorf("--domain is required when --cert/--key are absent")
+	}
+	return nil
+}
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
-		if errorsIsHelp(err) {
-			return
-		}
 		log.Fatal(err)
 	}
 }
 
-func errorsIsHelp(err error) bool { return errors.Is(err, pflag.ErrHelp) }
-
 func run(args []string) error {
-	c, err := parse(args)
-	if err != nil {
-		return err
+	var c config
+	cmd := newCommand(&c, func(c config) error { return executeConfig(c, os.Stdout) })
+	cmd.SetArgs(args)
+	if err := cmd.Execute(); err != nil {
+		return fmt.Errorf("tunneld: %w", err)
 	}
+	return nil
+}
+
+func executeConfig(c config, out io.Writer) error {
 	if err := os.MkdirAll(c.stateDir, 0700); err != nil {
 		return fmt.Errorf("create state directory: %w", err)
 	}
@@ -108,7 +133,7 @@ func run(args []string) error {
 			return fmt.Errorf("open generated transport authority: %w", err)
 		}
 		if c.exportCA {
-			if _, err = os.Stdout.Write(authority.PEM()); err != nil {
+			if _, err = out.Write(authority.PEM()); err != nil {
 				return fmt.Errorf("write generated transport CA: %w", err)
 			}
 			return nil

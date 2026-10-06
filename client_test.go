@@ -16,7 +16,7 @@ import (
 	"testing"
 	"time"
 
-	"tunnel/internal/server"
+	"github.com/fasmide/tunnel/internal/server"
 )
 
 func runningServer(t testing.TB) (*server.Server, *server.Manager, *tls.Config) {

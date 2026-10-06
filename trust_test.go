@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"tunnel/internal/server"
-	"tunnel/internal/transportpki"
+	"github.com/fasmide/tunnel/internal/server"
+	"github.com/fasmide/tunnel/internal/transportpki"
 )
 
 func TestGeneratedCATrustBootstrapJoinAndDial(t *testing.T) {

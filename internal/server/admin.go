@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"tunnel/internal/wire"
+	"github.com/fasmide/tunnel/internal/wire"
 )
 
 type AdminRequest struct {

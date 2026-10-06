@@ -4,8 +4,8 @@ import (
 	"encoding/base64"
 	"time"
 
-	"tunnel/internal/transportpki"
-	"tunnel/internal/wire"
+	"github.com/fasmide/tunnel/internal/transportpki"
+	"github.com/fasmide/tunnel/internal/wire"
 )
 
 func (m *Manager) issueCertificate(id uint64, r wire.IssueCertificate, issuer *transportpki.Authority) wire.CertificateResult {

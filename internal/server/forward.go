@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/fasmide/tunnel/internal/wire"
 	quic "github.com/quic-go/quic-go"
-	"tunnel/internal/wire"
 )
 
 type forwarding struct {

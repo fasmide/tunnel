@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"tunnel/internal/server"
+	"github.com/fasmide/tunnel/internal/server"
 )
 
 func publicHTTP(t testing.TB, edge *server.TLSEdge) net.Conn {

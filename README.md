@@ -72,6 +72,23 @@ Check the requested hostname before approving. The client will start serving aut
 
 The default mode obtains and caches Let's Encrypt certificates on the application machine; it accepts the CA's terms of service. The first HTTPS request may take longer while a certificate is issued.
 
+## Help and completion
+
+Every tool supports `--help`; subcommands have their own help too:
+
+```sh
+./bin/tunnelproxy serve --help
+./bin/tunnelctl help approve
+```
+
+For Bash, with bash-completion installed, enable completion in your current shell:
+
+```sh
+source <(./bin/tunnelproxy completion bash)
+```
+
+Use `completion bash --help` for installation guidance. Zsh, Fish, and PowerShell are supported too; each tool generates its own script.
+
 ## Dig deeper
 
 - **Run it again:** use `tunnelproxy serve` with the same server, name, and target. Saved identity and trust are reused; no fingerprint is needed.

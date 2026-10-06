@@ -14,13 +14,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fasmide/tunnel/internal/names"
+	"github.com/fasmide/tunnel/internal/streamconn"
+	"github.com/fasmide/tunnel/internal/wire"
 	quic "github.com/quic-go/quic-go"
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
 	"golang.org/x/net/idna"
-	"tunnel/internal/names"
-	"tunnel/internal/streamconn"
-	"tunnel/internal/wire"
 )
 
 type Option func(*dialOptions) error

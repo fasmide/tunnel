@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fasmide/tunnel/internal/wire"
 	quic "github.com/quic-go/quic-go"
-	"tunnel/internal/wire"
 )
 
 func testCertificate(t *testing.T, server bool) (tls.Certificate, ed25519.PublicKey) {

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"tunnel/internal/wire"
+	"github.com/fasmide/tunnel/internal/wire"
 )
 
 func key(t *testing.T) ed25519.PublicKey {

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"tunnel"
-	"tunnel/internal/transportpki"
-	"tunnel/internal/wire"
+	"github.com/fasmide/tunnel"
+	"github.com/fasmide/tunnel/internal/transportpki"
+	"github.com/fasmide/tunnel/internal/wire"
 )
 
 func TestPrivateIssuanceAuthorizationCSRAndRate(t *testing.T) {

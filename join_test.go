@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"tunnel/internal/server"
-	"tunnel/internal/wire"
+	"github.com/fasmide/tunnel/internal/server"
+	"github.com/fasmide/tunnel/internal/wire"
 )
 
 func signedJoin(t *testing.T, c Credentials, routes ...string) wire.Join {

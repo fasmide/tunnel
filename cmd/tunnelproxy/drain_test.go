@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"tunnel"
-	"tunnel/internal/server"
-	"tunnel/internal/transportpki"
+	"github.com/fasmide/tunnel"
+	"github.com/fasmide/tunnel/internal/server"
+	"github.com/fasmide/tunnel/internal/transportpki"
 )
 
 func TestForwardActiveDrainAndDeadline(t *testing.T) {
@@ -75,7 +75,7 @@ func TestForwardActiveDrainAndDeadline(t *testing.T) {
 			}
 			done := make(chan error, 1)
 			go func() {
-				done <- forwardHTTP(serving, c, l, []string{backend.Addr().String()}, time.Second, duration, true, io.Discard)
+				done <- serveClient(serving, config{name: "app.example.com", mode: "http", target: backend.Addr().String(), dialTimeout: time.Second, drainTimeout: duration}, c, l, []string{backend.Addr().String()}, io.Discard)
 			}()
 			edge, err := s.ListenHTTP("127.0.0.1:0")
 			if err != nil {
