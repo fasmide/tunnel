@@ -1,0 +1,7 @@
+# Install as /etc/systemd/system/tunneld.service.d/transport.conf after
+# replacing tunnel.example.com with your transport DNS base name.
+# Do not use this together with externally supplied transport certificates.
+[Service]
+LoadCredential=
+ExecStart=
+ExecStart=/usr/local/bin/tunneld --state ${STATE_DIRECTORY} --socket ${RUNTIME_DIRECTORY}/admin.sock --domain tunnel.example.com --quic :7443 --https :443 --http :80

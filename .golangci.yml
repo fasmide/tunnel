@@ -1,0 +1,40 @@
+version: "2"
+
+run:
+  tests: false
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - canonicalheader
+    - copyloopvar
+    - contextcheck
+    - durationcheck
+    - errname
+    - errorlint
+    - fatcontext
+    - forcetypeassert
+    - gocritic
+    - misspell
+    - nilerr
+    - nilnesserr
+    - nilnil
+    - noctx
+    - nolintlint
+    - unconvert
+    - unparam
+    - usestdlibvars
+    - wrapcheck
+    - usetesting
+    - wastedassign
+  exclusions:
+    rules:
+      - linters:
+          - unused
+        path: client.go
+        text: 'func \(\*Client\)\.rpc is unused'
+      - linters:
+          - unused
+        path: private.go
+        text: 'func \(\*privateManager\)\.certificate is unused'
