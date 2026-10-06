@@ -1,4 +1,4 @@
-module tunnel
+module github.com/fasmide/tunnel
 
 go 1.25.0
 

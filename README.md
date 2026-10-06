@@ -89,3 +89,16 @@ Clients reconnect automatically, but interrupted requests aren't replayed. `tunn
 The public Go API lives at the repository root. [`cmd/`](https://github.com/fasmide/tunnel/tree/main/cmd) contains the tools; [`internal/server/`](https://github.com/fasmide/tunnel/tree/main/internal/server) handles routing and authorization; [`internal/wire/`](https://github.com/fasmide/tunnel/tree/main/internal/wire) defines the tunnel protocol.
 
 Run `make test` for race-enabled tests, or `make vet` for static checks.
+
+## How does it compare?
+
+All of these can connect a private service to a reachable endpoint. The main difference is who runs that endpoint and how much infrastructure you want to own.
+
+| Tool | Good fit | Trade-off |
+| --- | --- | --- |
+| **tunnel** | Your own server and hostname, client-side HTTPS termination, or a Go `net.Listener` integration. | You operate the public server, DNS, firewall, and access approvals. Focused on HTTP and hostname-routed TLS, not arbitrary public TCP/UDP. |
+| **[ngrok](https://ngrok.com/)** | A managed public endpoint with minimal setup and traffic-management features. | The usual hosted workflow depends on ngrok's service; features and limits vary by plan. |
+| **[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/)** (`cloudflared`) | Publishing applications through Cloudflare, with optional Cloudflare Access policies. | The standard public-hostname workflow uses Cloudflare's DNS and edge; public HTTPS terminates there. |
+| **[frp](https://github.com/fatedier/frp)** | Self-hosted forwarding across a broader range of protocols, including TCP and UDP. | You operate the server and configure forwarding; its model is broader than this project's web-service and Go-listener focus. |
+
+Choose **tunnel** if you want to own the public endpoint and keep application TLS termination on your machine. Choose a managed service if you'd rather avoid operating that endpoint, or a general-purpose forwarder if you need other protocols. TLS behavior depends on the product and mode—ngrok, for example, also supports TLS passthrough.
