@@ -50,9 +50,11 @@ SERVER=tunnel.example.com:7443
 NAME=blog.example.com
 TARGET=127.0.0.1:8080
 MODE=acme
-# Optional transport trust bootstrap:
-# FINGERPRINT=0123456789abcdef...
+# Required on first startup: full CA SHA-256 from the administrator.
+FINGERPRINT=REPLACE_WITH_VERIFIED_64_CHARACTER_LOWERCASE_HEX
+# Alternatively, omit FINGERPRINT and explicitly accept first-contact risk:
 # TOFU=true
+# Omit TOFU entirely to disable it; TOFU=false still enables it in these units.
 # SERVER_NAME=tunnel.example.com
 # ACME_EMAIL=you@example.com
 # SETUP_TIMEOUT=30s

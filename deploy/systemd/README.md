@@ -14,47 +14,54 @@ go build -o /tmp/tunneld ./cmd/tunneld
 go build -o /tmp/tunnelctl ./cmd/tunnelctl
 sudo install -o root -g root -m 0755 /tmp/tunneld /usr/local/bin/tunneld
 sudo install -o root -g root -m 0755 /tmp/tunnelctl /usr/local/bin/tunnelctl
-sudo install -d -o root -g root -m 0700 /etc/tunneld
-sudo install -o root -g root -m 0600 transport.crt /etc/tunneld/transport.crt
-sudo install -o root -g root -m 0600 transport.key /etc/tunneld/transport.key
 sudo install -o root -g root -m 0644 deploy/systemd/tunneld.service /etc/systemd/system/tunneld.service
+sudo install -d -m 0755 /etc/systemd/system/tunneld.service.d
+sudo systemctl edit tunneld.service
+# In the editor, set your real transport DNS base before the first start:
+# [Service]
+# Environment=TUNNELD_DOMAIN=tunnel.example.net
 sudo systemd-analyze verify /etc/systemd/system/tunneld.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now tunneld.service
 sudo journalctl -u tunneld.service -f
 ```
 
-The transport certificate must cover the daemon hostname and be trusted by
-clients. It is **not** an application HTTPS certificate. Only transport keys go
-in `/etc/tunneld`; application TLS/ACME keys remain at applications.
-Open the matching firewall ports and configure application DNS separately.
+The normal deployment uses `--domain` to create a persistent constrained CA;
+no transport certificate files need to be provisioned. Set `TUNNELD_DOMAIN` to
+your real transport DNS base, not the supplied placeholder. The daemon hostname
+must be that base or an immediate subdomain (the transport leaf covers the base
+and `*.BASE`). Applications using `private` mode must
+also use names within this CA's namespace. Application TLS/ACME keys remain at
+applications, not at the daemon.
+Open the matching firewall ports and configure daemon/application DNS separately.
 Installing this unit does not configure either.
 
 Do not create a permanent `tunneld` user: `DynamicUser=yes` allocates a transient
 identity. If a static user of that name already exists, systemd will use it;
 use a different unused service user name if a truly dynamic identity is needed.
 
-## Generated constrained-CA mode
+## Generated constrained CA (default)
 
-The base unit retains externally supplied certificates for compatibility. To use
-private PKI instead, install `generated-ca.conf.example` as a drop-in after
-replacing its example domain with your transport DNS base. Do this **before**
-starting the service; skip installing transport.crt/key in this mode:
+The base unit generates the CA on first start and reuses it across restarts.
+`generated-ca.conf.example` is also available as a domain-configuration drop-in;
+replace its example domain before installing it as
+`/etc/systemd/system/tunneld.service.d/transport.conf`. It resets credentials and
+the start command, so it can also replace an older external-certificate setup.
+All sandboxing stays intact.
+
+The CA certificate/key are one atomic state value in `server/transport-ca`,
+protected by StateDirectory. Retrieve its fingerprint with:
 
 ```sh
-sudo install -d -m 0755 /etc/systemd/system/tunneld.service.d
-# Edit a copy: replace tunnel.example.com with your real transport domain.
-sudo install -m 0644 transport.conf /etc/systemd/system/tunneld.service.d/transport.conf
-sudo systemctl daemon-reload
-sudo systemctl restart tunneld.service
-sudo journalctl -u tunneld.service -n 30
+sudo /usr/local/bin/tunnelctl fingerprint
 ```
 
-The drop-in resets LoadCredential and ExecStart; all sandboxing stays intact.
-The CA certificate/key are one atomic state value in `server/transport-ca`,
-protected by StateDirectory. The fingerprint appears in the journal; clients
-retrieve the CA over QUIC using BootstrapTrust (fingerprint or explicit TOFU),
-then LoadTransportTLS. See the main README. Do not trust an unverified download.
+Share the fingerprint with application operators through a trusted channel.
+`tunnelproxy` user services need `--fingerprint` (or explicitly risky `--tofu`)
+on first startup; after that they reuse saved trust. See the
+[user-service guide](user/README.md). Library clients retrieve the CA over QUIC
+using BootstrapTrust, then LoadTransportTLS. Do not trust an unverified download.
+
 To export public PEM manually, while the daemon is stopped run the following
 as the state owner (not host root with an id-mapped DynamicUser directory):
 `tunneld --state DIR --domain BASE --export-ca`. This command takes the exclusive
@@ -63,8 +70,9 @@ CA when none exists; back up state and preserve the identity.
 
 Generated leaves renew automatically; the 25-year CA does not. CA/domain
 migration or switching between generated trust and public PKI is deliberate
-client trust reprovisioning, never an automatic fallback. The existing VM
-installation has not been switched by these source changes.
+client trust reprovisioning, never an automatic fallback. Updating the supplied
+unit does not migrate an existing installation; inspect its drop-ins and saved
+client trust before changing transport mode.
 
 ## State and administration
 
@@ -107,7 +115,38 @@ stop the service first. Never edit `server/state` while the daemon is running.
 `systemctl stop` does not remove state; do not use `systemctl clean --what=state`
 unless intentionally destroying it.
 
-## Credentials and rotation
+## External transport certificates (advanced opt-in)
+
+`tunneld` still accepts `--cert`/`--key` instead of `--domain`. This is not the
+normal deployment: operators are responsible for certificate provisioning,
+renewal, and compatible client trust configuration. The certificate's DNS SANs
+identify the transport endpoint; the daemon does not derive a signing domain
+or CA from them. **Application `private` mode is unavailable** because the daemon
+has no signing CA. This is separate from `tunnelproxy --mode byo`, which supplies
+an application's HTTPS certificate and works with the default generated daemon CA.
+
+The current `tunnelproxy` transport-trust workflow expects a constrained CA;
+it has no system-root fallback for ordinary public-PKI transport certificates.
+Choosing an external transport certificate does not automatically make that
+client workflow compatible.
+
+To opt in, provision a matching transport certificate/key pair in root-owned
+`/etc/tunneld` (directory mode 0700, files 0600), then use
+`sudo systemctl edit tunneld.service` to add:
+
+```ini
+[Service]
+LoadCredential=
+LoadCredential=transport.crt:/etc/tunneld/transport.crt
+LoadCredential=transport.key:/etc/tunneld/transport.key
+ExecStart=
+ExecStart=/usr/local/bin/tunneld --state ${STATE_DIRECTORY} --socket ${RUNTIME_DIRECTORY}/admin.sock --cert ${CREDENTIALS_DIRECTORY}/transport.crt --key ${CREDENTIALS_DIRECTORY}/transport.key --quic :7443 --https :443 --http :80
+```
+
+Do not pass `--domain` with `--cert`/`--key`. Keep application TLS/ACME keys at
+applications; only the daemon transport identity belongs in `/etc/tunneld`.
+Reload systemd and restart during a maintenance window after verifying client
+compatibility and reprovisioning trust as needed.
 
 `LoadCredential` lets PID 1 read root-only files and provide private read-only
 copies through `${CREDENTIALS_DIRECTORY}`. The dynamic user does not need access
@@ -152,20 +191,10 @@ sandboxing wholesale to address a single compatibility problem.
 
 ## Validation
 
-The unit passes `systemd-analyze verify` using a temporary root with a built
-binary, and offline `systemd-analyze security` reports exposure **1.6 (OK)** on
-systemd 262. That score is a configuration heuristic, not a security guarantee.
-Live smoke testing also passed on an ARM64 Ubuntu 26.04 VM with systemd 259,
-using Go 1.25 cross-built static binaries and a temporary private transport CA:
-join/approval, public HTTPS passthrough, explicit HTTP, persisted grants across
-service restart, client reconnect, and graceful client drain. The live process
-had a dynamic non-root UID, NoNewPrivileges=1, seccomp filtering, and only
-CAP_NET_BIND_SERVICE in its effective/bounding/ambient sets. State/socket files
-were 0600; host-side nobody ownership was expected with id-mapped mounts.
-The live exposure score was also 1.6. The test service was stopped and left
-disabled at boot; its temporary certificate is not a production credential.
+Verify on your target host. `systemd-analyze security` is a configuration
+heuristic, not a security guarantee; results depend on the host's systemd build
+and kernel. Offline unit verification does not exercise the live sandbox:
 
-Verify on your own target host too:
 
 ```sh
 sudo systemctl status tunneld.service

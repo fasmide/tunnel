@@ -17,11 +17,10 @@ RuntimeDirectoryMode=0700
 WorkingDirectory=/var/lib/tunneld
 UMask=0077
 
-# PID 1 reads these root-owned files and exposes private, read-only copies.
-# Only the daemon transport identity belongs here, never application TLS keys.
-LoadCredential=transport.crt:/etc/tunneld/transport.crt
-LoadCredential=transport.key:/etc/tunneld/transport.key
-ExecStart=/usr/local/bin/tunneld --state ${STATE_DIRECTORY} --socket ${RUNTIME_DIRECTORY}/admin.sock --cert ${CREDENTIALS_DIRECTORY}/transport.crt --key ${CREDENTIALS_DIRECTORY}/transport.key --quic :7443 --https :443 --http :80
+# Set your transport DNS base with a drop-in before the first start.
+# The generated constrained CA and its key persist in StateDirectory.
+Environment=TUNNELD_DOMAIN=tunnel.example.com
+ExecStart=/usr/local/bin/tunneld --state ${STATE_DIRECTORY} --socket ${RUNTIME_DIRECTORY}/admin.sock --domain ${TUNNELD_DOMAIN} --quic :7443 --https :443 --http :80
 
 Restart=on-failure
 RestartSec=5s
