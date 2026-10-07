@@ -207,9 +207,11 @@ func appCertificate(t *testing.T, dir string) (tls.Certificate, *x509.CertPool) 
 	return cert, roots
 }
 func TestJoinServeModesAndSignalDrain(t *testing.T) {
-	for _, variant := range []string{"http", "byo", "raw", "private", "http-auth", "byo-auth", "raw-auth", "private-auth", "http-cookie", "byo-cookie", "raw-cookie", "private-cookie"} {
+	for _, variant := range []string{"http", "byo", "raw", "private", "http-auth", "byo-auth", "raw-auth", "private-auth", "http-cookie", "byo-cookie", "raw-cookie", "private-cookie", "byo-clientcert", "private-clientcert"} {
 		t.Run(variant, func(t *testing.T) {
-			mode := strings.TrimSuffix(strings.TrimSuffix(variant, "-auth"), "-cookie")
+			mode := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(variant, "-auth"), "-cookie"), "-clientcert")
+			withClientCert := strings.HasSuffix(variant, "-clientcert")
+			clientCert, clientLeaf, _ := makeClientCertificate(t, nil, nil, x509.ExtKeyUsageClientAuth, false)
 			withAuth := strings.HasSuffix(variant, "-auth")
 			withCookie := strings.HasSuffix(variant, "-cookie")
 			a, err := transportpki.Open(tunnel.MemoryStorage(), "example.com", time.Now())
@@ -276,6 +278,9 @@ func TestJoinServeModesAndSignalDrain(t *testing.T) {
 			if withCookie {
 				args = append(args, "--cookieauth=user:secret", "--cookieauth=colleague:another-secret")
 			}
+			if withClientCert {
+				args = append(args, "--clientcertauth="+certPin(clientLeaf))
+			}
 			if mode == "byo" {
 				args = append(args, "--cert", filepath.Join(dir, "cert.pem"), "--key", filepath.Join(dir, "key.pem"))
 			}
@@ -304,6 +309,14 @@ func TestJoinServeModesAndSignalDrain(t *testing.T) {
 			scheme := "https"
 			if mode == "http" {
 				scheme = "http"
+			}
+			if withClientCert {
+				denied := &http.Client{Transport: tr, Timeout: 3 * time.Second}
+				if resp, err := denied.Get("https://app.example.com/"); err == nil {
+					_ = resp.Body.Close()
+					t.Fatal("missing client certificate accepted")
+				}
+				tr.TLSClientConfig.Certificates = []tls.Certificate{clientCert}
 			}
 			client := &http.Client{Transport: tr, Timeout: 3 * time.Second}
 			resp, err := client.Get(scheme + "://app.example.com/")

@@ -41,6 +41,11 @@ type privateManager struct {
 // name certificate on demand; renewal happens at subsequent handshakes with
 // less than 24 hours remaining. No wildcard certificates or ACME are used.
 func (c *Client) ListenPrivate(ctx context.Context, name string) (net.Listener, error) {
+	return c.ListenPrivateWithClientAuth(ctx, name, nil)
+}
+
+// ListenPrivateWithClientAuth is ListenPrivate with public client authentication.
+func (c *Client) ListenPrivateWithClientAuth(ctx context.Context, name string, auth *ClientAuthConfig) (net.Listener, error) {
 	name, err := canonicalName(name)
 	if err != nil {
 		return nil, err
@@ -63,6 +68,7 @@ func (c *Client) ListenPrivate(ctx context.Context, name string) (net.Listener, 
 	}
 	config := &tls.Config{MinVersion: tls.VersionTLS12, NextProtos: []string{"h2", "http/1.1"}}
 	config.GetCertificate = manager.getCertificate(ctx, name)
+	applyClientAuth(config, auth)
 	return c.listen(ctx, name, "private", config)
 }
 func (c *Client) privateSession(name string) (*clientSession, *x509.Certificate, error) {

@@ -364,13 +364,21 @@ func TestACMEIssuanceThroughTunnelAndCachedRestart(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = c.Close() })
 	setup, stopSetup := context.WithCancel(ctx)
-	l, err := c.Listen(setup, "alice.example.com")
+	clientCert, _ := applicationCertificate(t)
+	clientPin := sha256.Sum256(clientCert.Certificate[0])
+	auth := &ClientAuthConfig{ClientAuth: tls.RequireAnyClientCert, VerifyConnection: func(state tls.ConnectionState) error {
+		if len(state.PeerCertificates) == 0 || sha256.Sum256(state.PeerCertificates[0].Raw) != clientPin {
+			return errors.New("unauthorized client")
+		}
+		return nil
+	}}
+	l, err := c.ListenWithClientAuth(setup, "alice.example.com", auth)
 	stopSetup() // Issuance must survive cancellation of the listener setup context.
 	if err != nil {
 		t.Fatal(err)
 	}
 	servePlainApplication(t, l)
-	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots}, DisableKeepAlives: true, DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+	transport := &http.Transport{TLSClientConfig: &tls.Config{RootCAs: roots, Certificates: []tls.Certificate{clientCert}}, DisableKeepAlives: true, DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "tcp", edge.Addr().String())
 	}}
 	defer transport.CloseIdleConnections()
@@ -387,6 +395,13 @@ func TestACMEIssuanceThroughTunnelAndCachedRestart(t *testing.T) {
 		}
 	}
 	get()
+	deniedTransport := transport.Clone()
+	deniedTransport.TLSClientConfig.Certificates = nil
+	defer deniedTransport.CloseIdleConnections()
+	if resp, err := (&http.Client{Transport: deniedTransport, Timeout: 3 * time.Second}).Get("https://" + domain + "/"); err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("ACME application accepted a missing client certificate")
+	}
 	if !validated.Load() || orders.Load() != 1 {
 		t.Fatal("ACME challenge did not run")
 	}
@@ -410,7 +425,7 @@ func TestACMEIssuanceThroughTunnelAndCachedRestart(t *testing.T) {
 		}
 	})
 	setup2, stopSetup2 := context.WithCancel(ctx)
-	l2, err := c2.Listen(setup2, "alice.example.com")
+	l2, err := c2.ListenWithClientAuth(setup2, "alice.example.com", auth)
 	stopSetup2() // Cached certificates must also survive setup cancellation.
 	if err != nil {
 		t.Fatal(err)

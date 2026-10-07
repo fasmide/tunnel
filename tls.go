@@ -55,6 +55,31 @@ func (c *Client) ListenTLS(ctx context.Context, name string, config *tls.Config)
 // only TLS-ALPN-01 is used; DNS must resolve to the daemon on public TCP 443.
 // Credential storage also stores the ACME account and cached certificates.
 func (c *Client) Listen(ctx context.Context, name string) (net.Listener, error) {
+	return c.ListenWithClientAuth(ctx, name, nil)
+}
+
+// ClientAuthConfig configures public client-certificate authentication, separate
+// from tunnel transport credentials. VerifyConnection also runs on resumption.
+type ClientAuthConfig struct {
+	ClientAuth       tls.ClientAuthType
+	ClientCAs        *x509.CertPool
+	VerifyConnection func(tls.ConnectionState) error
+}
+
+func applyClientAuth(config *tls.Config, auth *ClientAuthConfig) {
+	if auth == nil {
+		return
+	}
+	config.ClientAuth = auth.ClientAuth
+	if auth.ClientCAs != nil {
+		config.ClientCAs = auth.ClientCAs.Clone()
+	}
+	config.VerifyConnection = auth.VerifyConnection
+}
+
+// ListenWithClientAuth is Listen with public client authentication. ACME
+// TLS-ALPN-01 challenge connections are exempt and never reach Accept.
+func (c *Client) ListenWithClientAuth(ctx context.Context, name string, auth *ClientAuthConfig) (net.Listener, error) {
 	c.acmeMu.Lock()
 	defer c.acmeMu.Unlock()
 	if c.storage == nil {
@@ -81,6 +106,23 @@ func (c *Client) Listen(ctx context.Context, name string) (net.Listener, error) 
 	get := config.GetCertificate
 	// Certificate issuance outlives Listen's setup context, just like the client.
 	config.GetCertificate = c.acmeGetCertificate(c.ctx, get) //nolint:contextcheck // Use client lifetime, not the short-lived setup context.
+	applyClientAuth(config, auth)
+	if auth != nil {
+		application := config.Clone()
+		challenge := config.Clone()
+		challenge.ClientAuth = tls.NoClientCert
+		challenge.ClientCAs = nil
+		challenge.VerifyConnection = nil
+		challenge.NextProtos = []string{acme.ALPNProto}
+		config.GetConfigForClient = func(hello *tls.ClientHelloInfo) (*tls.Config, error) {
+			// Match autocert's challenge selection: only a sole acme-tls/1 offer
+			// is exempt. Negotiating it never grants application access.
+			if len(hello.SupportedProtos) == 1 && hello.SupportedProtos[0] == acme.ALPNProto {
+				return challenge, nil
+			}
+			return application, nil
+		}
+	}
 	return c.listen(ctx, name, "acme", config)
 }
 func (c *Client) acmeGetCertificate(ctx context.Context, get func(*tls.ClientHelloInfo) (*tls.Certificate, error)) func(*tls.ClientHelloInfo) (*tls.Certificate, error) {

@@ -32,6 +32,8 @@ type config struct {
 	cookieAuth                                                                            []string
 	cookieAuthEnabled                                                                     bool
 	cookieAuthDuration                                                                    time.Duration
+	clientCertAuth                                                                        []string
+	clientCertAuthCA                                                                      string
 	setupTimeout, drainTimeout, dialTimeout                                               time.Duration
 }
 
@@ -64,7 +66,13 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 			serving.StringArrayVar(&c.cookieAuth, "cookieauth", nil, "add a sign-in identity (repeatable): bare flag generates a password; use --cookieauth=user:password or user:bcrypt-hash; empty user accepts any username (raw mode cannot enforce auth)")
 			serving.Lookup("cookieauth").NoOptDefVal = "generate"
 			serving.DurationVar(&c.cookieAuthDuration, "cookieauth-duration", 24*time.Hour, "session lifetime from login; restarting invalidates all sessions")
-			child.MarkFlagsMutuallyExclusive("basicauth", "cookieauth")
+			serving.StringArrayVar(&c.clientCertAuth, "clientcertauth", nil, "allow a client certificate SHA-256 fingerprint (repeatable; hex with optional colons; TLS modes only)")
+			serving.StringVar(&c.clientCertAuthCA, "clientcertauth-ca", "", "trust client certificates issued by this PEM CA bundle (TLS modes only)")
+			_ = child.MarkFlagFilename("clientcertauth-ca", "pem", "crt")
+			_ = child.RegisterFlagCompletionFunc("clientcertauth", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			})
+			child.MarkFlagsMutuallyExclusive("basicauth", "cookieauth", "clientcertauth", "clientcertauth-ca")
 			_ = child.RegisterFlagCompletionFunc("cookieauth", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			})
@@ -90,6 +98,9 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 			c.command = cmd.Name()
 			c.basicAuthEnabled = cmd.Flags().Changed("basicauth")
 			c.cookieAuthEnabled = cmd.Flags().Changed("cookieauth")
+			if cmd.Flags().Changed("clientcertauth-ca") && c.clientCertAuthCA == "" {
+				return errors.New("--clientcertauth-ca requires a PEM CA bundle path")
+			}
 			if cmd.Flags().Changed("cookieauth-duration") && !c.cookieAuthEnabled {
 				return errors.New("--cookieauth-duration requires --cookieauth")
 			}
@@ -157,8 +168,24 @@ func validateConfig(c config) (config, error) {
 		}
 		c.state = filepath.Join(dir, "tunnelproxy")
 	}
-	if c.basicAuthEnabled && c.cookieAuthEnabled {
-		return c, errors.New("--basicauth and --cookieauth are mutually exclusive")
+	methods := 0
+	for _, enabled := range []bool{c.basicAuthEnabled, c.cookieAuthEnabled, len(c.clientCertAuth) > 0, c.clientCertAuthCA != ""} {
+		if enabled {
+			methods++
+		}
+	}
+	if methods > 1 {
+		return c, errors.New("--basicauth, --cookieauth, --clientcertauth and --clientcertauth-ca are mutually exclusive")
+	}
+	if len(c.clientCertAuth) > 0 || c.clientCertAuthCA != "" {
+		if c.command == "join" || c.mode == "http" || c.mode == "raw" {
+			return c, errors.New("client certificate authentication requires serve or joinserve with acme, private or byo mode")
+		}
+		for _, value := range c.clientCertAuth {
+			if _, err := parseClientCertFingerprint(value); err != nil {
+				return c, err
+			}
+		}
 	}
 	if c.cookieAuthEnabled && c.cookieAuthDuration < time.Second {
 		return c, errors.New("--cookieauth-duration must be at least 1s")
@@ -295,15 +322,19 @@ func targets(ctx context.Context, target string) ([]string, error) {
 	return addresses, nil
 }
 func listener(ctx context.Context, c config, client *tunnel.Client) (net.Listener, error) {
+	auth, err := prepareClientCertAuth(c)
+	if err != nil {
+		return nil, err
+	}
 	switch c.mode {
 	case "acme":
-		listener, err := client.Listen(ctx, c.name)
+		listener, err := client.ListenWithClientAuth(ctx, c.name, auth)
 		if err != nil {
 			return nil, fmt.Errorf("listen acme: %w", err)
 		}
 		return listener, nil
 	case "private":
-		listener, err := client.ListenPrivate(ctx, c.name)
+		listener, err := client.ListenPrivateWithClientAuth(ctx, c.name, auth)
 		if err != nil {
 			return nil, fmt.Errorf("listen private: %w", err)
 		}
@@ -325,7 +356,11 @@ func listener(ctx context.Context, c config, client *tunnel.Client) (net.Listene
 		if err != nil {
 			return nil, fmt.Errorf("load BYO certificate: %w", err)
 		}
-		listener, err := client.ListenTLS(ctx, c.name, &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12, NextProtos: []string{"h2", "http/1.1"}})
+		tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12, NextProtos: []string{"h2", "http/1.1"}}
+		if auth != nil {
+			tlsConfig.ClientAuth, tlsConfig.ClientCAs, tlsConfig.VerifyConnection = auth.ClientAuth, auth.ClientCAs, auth.VerifyConnection
+		}
+		listener, err := client.ListenTLS(ctx, c.name, tlsConfig)
 		if err != nil {
 			return nil, fmt.Errorf("listen byo TLS: %w", err)
 		}
