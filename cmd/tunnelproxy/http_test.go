@@ -73,15 +73,27 @@ func TestHTTPUpgradeBidirectionalRelay(t *testing.T) {
 	defer backend.Close()
 	proxy, transport := newHTTPProxy([]string{backend.Listener.Addr().String()}, time.Second)
 	defer transport.CloseIdleConnections()
-	front := httptest.NewServer(proxy)
+	auth, err := parseBasicAuth("user:secret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	front := httptest.NewServer(auth.wrap(proxy))
 	defer front.Close()
+	denied, err := http.Get(front.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = denied.Body.Close()
+	if denied.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated upgrade status %d", denied.StatusCode)
+	}
 	conn, err := net.Dial("tcp", front.Listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = conn.Close() }()
 	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
-	_, err = io.WriteString(conn, "GET / HTTP/1.1\r\nHost: public.example.com\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
+	_, err = io.WriteString(conn, "GET / HTTP/1.1\r\nHost: public.example.com\r\nAuthorization: Basic dXNlcjpzZWNyZXQ=\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
 	if err != nil {
 		t.Fatal(err)
 	}

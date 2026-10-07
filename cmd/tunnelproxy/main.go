@@ -27,6 +27,8 @@ import (
 type config struct {
 	command, server, name, state, target, mode, cert, key, serverName, fingerprint, email string
 	tofu                                                                                  bool
+	basicAuth                                                                             []string
+	basicAuthEnabled                                                                      bool
 	setupTimeout, drainTimeout, dialTimeout                                               time.Duration
 }
 
@@ -55,6 +57,11 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 		if spec.name != "join" {
 			child.Example += " --target 127.0.0.1:8080"
 			serving := child.Flags()
+			serving.StringArrayVar(&c.basicAuth, "basicauth", nil, "add an allowed Basic auth identity (repeatable): bare flag generates a password; use --basicauth=user:password or user:bcrypt-hash; empty user accepts any username (raw mode cannot enforce auth)")
+			serving.Lookup("basicauth").NoOptDefVal = "generate"
+			_ = child.RegisterFlagCompletionFunc("basicauth", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			})
 			serving.StringVarP(&c.target, "target", "t", "", "loopback TCP service, e.g. 127.0.0.1:8080")
 			serving.StringVarP(&c.mode, "mode", "m", "acme", "public mode: acme, private, byo, raw, http")
 			serving.StringVar(&c.cert, "cert", "", "public certificate PEM for byo mode, not transport TLS")
@@ -71,6 +78,15 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 		}
 		child.RunE = func(cmd *cobra.Command, args []string) error {
 			c.command = cmd.Name()
+			c.basicAuthEnabled = cmd.Flags().Changed("basicauth")
+			for i, value := range c.basicAuth {
+				if value == "" {
+					return errors.New("--basicauth= requires credentials; use bare --basicauth to generate a password")
+				}
+				if value == "generate" {
+					c.basicAuth[i] = ""
+				}
+			}
 			validated, err := validateConfig(*c)
 			if err != nil {
 				return err
@@ -122,8 +138,15 @@ func validateConfig(c config) (config, error) {
 		}
 		c.state = filepath.Join(dir, "tunnelproxy")
 	}
+	for i, value := range c.basicAuth {
+		if value != "" {
+			if _, err := parseBasicAuth(value); err != nil {
+				return c, fmt.Errorf("Basic auth identity %d: %w", i+1, err)
+			}
+		}
+	}
 	if c.command == "join" {
-		if c.target != "" || c.cert != "" || c.key != "" || c.mode != "acme" || c.email != "" {
+		if c.target != "" || c.cert != "" || c.key != "" || c.mode != "acme" || c.email != "" || c.basicAuthEnabled {
 			return c, errors.New("forwarding options require serve or joinserve")
 		}
 	} else {
@@ -409,10 +432,14 @@ func serveClient(ctx context.Context, c config, client *tunnel.Client, l net.Lis
 	if _, err := fmt.Fprintf(out, "serving %s (%s) -> %s\n", c.name, c.mode, c.target); err != nil {
 		return fmt.Errorf("write serve banner: %w", err)
 	}
+	auth, err := prepareBasicAuth(c, out)
+	if err != nil {
+		return err
+	}
 	if c.mode == "raw" {
 		return forward(ctx, client, l, addresses, c.dialTimeout, c.drainTimeout, out)
 	}
-	return forwardHTTP(ctx, client, l, addresses, c.dialTimeout, c.drainTimeout, c.mode == "http", out)
+	return forwardHTTP(ctx, client, l, addresses, c.dialTimeout, c.drainTimeout, c.mode == "http", auth, out)
 }
 
 type pair struct{ public, local net.Conn }

@@ -104,15 +104,16 @@ func (l oneShotListener) Accept() (net.Conn, error) {
 	return &oneShotConn{Conn: c, done: make(chan struct{})}, nil
 }
 
-func forwardHTTP(ctx context.Context, client *tunnel.Client, l net.Listener, addresses []string, dialTimeout, drainTimeout time.Duration, plain bool, out io.Writer) error {
+func forwardHTTP(ctx context.Context, client *tunnel.Client, l net.Listener, addresses []string, dialTimeout, drainTimeout time.Duration, plain bool, auth basicAuthList, out io.Writer) error {
 	proxy, transport := newHTTPProxy(addresses, dialTimeout)
-	var handler http.Handler = proxy
+	var handler http.Handler = auth.wrap(proxy)
 	if plain {
 		l = oneShotListener{l}
+		next := handler
 		handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			r.Close = true
 			w.Header().Set("Connection", "close")
-			proxy.ServeHTTP(w, r)
+			next.ServeHTTP(w, r)
 			// Release the background EOF read once handler work is complete, so
 			// net/http can finish/flush its response and close this one-shot stream.
 			if conn, ok := r.Context().Value(oneShotContextKey{}).(*oneShotConn); ok {

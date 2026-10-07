@@ -1,8 +1,8 @@
 # tunnel
 
-Expose a local web service at your own HTTPS hostname, using a server you control.
+A self-hosted SNI router for publishing web services over outbound QUIC tunnels.
 
-Your application machine connects outward over QUIC—no inbound port forwarding needed there. The public server routes traffic to it, while HTTPS terminates on the application machine. Application certificate private keys stay on that machine.
+Bring your own server and HTTPS hostname. Your application machine connects outward—no inbound port forwarding needed there. The public server routes TLS connections by hostname (SNI), while HTTPS terminates on the application machine. Application certificate private keys stay on that machine.
 
 ```text
 Browser ── HTTPS ──▶ public server ── QUIC tunnel ──▶ application machine
@@ -37,7 +37,7 @@ On the public server, run as root for this initial walkthrough (the default port
 ./bin/tunneld --domain tunnel.example.net
 ```
 
-This creates persistent state and a private, DNS-constrained certificate authority for tunnel transport. Leave the daemon running. In another root shell, get its fingerprint:
+This creates persistent state and a private certificate authority (CA), restricted to your domain, to secure the QUIC tunnels. This CA is separate from your application's public HTTPS certificates. Leave the daemon running. In another root shell, get the CA's fingerprint:
 
 ```sh
 ./bin/tunnelctl fingerprint
@@ -57,7 +57,7 @@ On the application machine, with your local web service running:
   --fingerprint YOUR_DAEMON_CA_SHA256
 ```
 
-The client saves its identity and transport trust, submits an access request, and waits for approval. Keep it running.
+The client saves its credentials and the trusted daemon CA, requests access to the hostname, and waits for approval. Keep it running.
 
 ### 4. Approve the request
 
@@ -71,6 +71,38 @@ In the public server's root shell:
 Check the requested hostname before approving. The client will start serving automatically. Open **https://app.tunnel.example.net/**.
 
 The default mode obtains and caches Let's Encrypt certificates on the application machine; it accepts the CA's terms of service. The first HTTPS request may take longer while a certificate is issued.
+
+## Share a development site
+
+Add `--basicauth` to `tunnelproxy serve` or `joinserve` to require a password before requests reach your local web service:
+
+```sh
+./bin/tunnelproxy serve \
+  --server tunnel.example.net \
+  --name app.tunnel.example.net \
+  --target 127.0.0.1:8080 \
+  --basicauth
+```
+
+The proxy prints a random password; share it with colleagues through a separate, trusted channel. Any username is accepted. The password is not saved: restarting the process generates a new one, but tunnel reconnects do not. Anyone who can read the proxy's logs can read this password too.
+
+For credentials that survive restarts, use `--basicauth='user:password'`. To avoid storing the password in plaintext, use `--basicauth='user:$2b$…'` with a complete bcrypt hash (`$2a$`, `$2b$`, and `$2y$` are supported). Quote hashes to prevent shell expansion. A nonempty username must match exactly. Use `--basicauth=':password'` or `--basicauth=':$2b$…'` to accept any username, just like generated-password mode. `nouser:password` requires the literal username `nouser`. Passwords may contain colons. Passwords beginning with `$2` are reserved for bcrypt hashes. Use the `=` spelling for explicit values, not a separate argument.
+
+Repeat `--basicauth` to allow multiple identities:
+
+```sh
+# Add these flags to serve or joinserve:
+--basicauth='alice:alice-password' --basicauth='bob:bob-password'
+```
+
+A request is accepted if its username and password match the same entry. You can mix plaintext, bcrypt, password-only, and generated entries; repeated usernames may have different passwords. Each bare `--basicauth` generates another independent password. A password-only entry accepts any username with that entry's password, even when named entries are also configured. Commas in passwords are literal, not separators. Every entry is validated; a later valid entry does not hide an earlier invalid one. Each configured bcrypt identity adds verification work per request, so use sensible hash costs and list sizes.
+
+Authentication is enforced locally by `tunnelproxy`, not `tunneld`. It applies to every HTTP request, including WebSocket upgrade requests. The proxy removes the accepted `Authorization` header before forwarding, so this feature cannot be combined with an application's own Authorization-based authentication on the same requests. Explicit plaintext passwords are not logged. For generated or plaintext passwords, the proxy prints a ready-to-copy bcrypt flag to reuse the password without configuring it in plaintext; passwords longer than bcrypt's 72-byte limit get a notice instead. Already-hashed credentials are not logged. Command-line values may be visible in process listings or shell history; treat the printed hashes as sensitive too, since they allow offline password guessing.
+
+All modes accept the flag, with two important caveats:
+
+- **`http`:** authentication works, but credentials travel unencrypted between the browser and public server. The encrypted QUIC tunnel does not protect that leg; the proxy prints a warning.
+- **`raw`:** the proxy cannot inspect HTTP inside the passed-through TLS connection. It prints a warning and does **not** enforce Basic authentication or generate a password. Configure authentication on your target service instead.
 
 ## Help and completion
 
@@ -91,15 +123,15 @@ Use `completion bash --help` for installation guidance. Zsh, Fish, and PowerShel
 
 ## Dig deeper
 
-- **Run it again:** use `tunnelproxy serve` with the same server, name, and target. Saved identity and trust are reused; no fingerprint is needed.
-- **Manage access:** `tunnelctl routes` shows routes and `tunnelctl revoke IDENTITY_ID` revokes an identity. Route grants cover the named hostname and its descendants.
-- **Choose certificates:** `--mode byo --cert ... --key ...` uses your own certificate. `--mode private` uses the daemon's CA; browsers must separately trust it.
-- **Own TLS yourself:** `--mode raw` passes the original TLS bytes to your loopback service. This is hostname-routed TLS, not arbitrary public TCP forwarding.
-- **Opt into plaintext:** `--mode http` forwards HTTP without TLS. Otherwise, valid public HTTP requests redirect to HTTPS.
+- **Run it again:** use `tunnelproxy serve` with the same server, name, and target. Saved credentials and daemon trust are reused; no fingerprint is needed.
+- **Manage access:** `tunnelctl routes` lists routes; `tunnelctl revoke IDENTITY_ID` revokes a client's access. A hostname grant also covers subdomains beneath it.
+- **Choose certificates:** `--mode byo --cert ... --key ...` uses your own HTTPS certificate. `--mode private` uses a certificate issued by the daemon's CA; browsers must trust that CA too.
+- **Let your service handle TLS:** `--mode raw` passes the TLS connection unchanged to your loopback service, which handles certificates and TLS termination. Routing still requires SNI; this is not arbitrary public TCP forwarding.
+- **Serve plain HTTP:** `--mode http` forwards public HTTP requests by hostname, without browser-to-application TLS. The QUIC tunnel remains encrypted. Otherwise, valid public HTTP requests redirect to HTTPS.
 - **Integrate with Go:** start with [`cmd/hello/main.go`](https://github.com/fasmide/tunnel/blob/main/cmd/hello/main.go), then explore [`doc.go`](https://github.com/fasmide/tunnel/blob/main/doc.go), [`ensure.go`](https://github.com/fasmide/tunnel/blob/main/ensure.go), and [`tls.go`](https://github.com/fasmide/tunnel/blob/main/tls.go).
 - **Deploy as services:** explore the units and configuration examples in [`deploy/systemd/`](https://github.com/fasmide/tunnel/tree/main/deploy/systemd). Keep state directories private and persistent.
 
-Clients reconnect automatically, but interrupted requests aren't replayed. `tunnelproxy` drains active traffic on SIGINT/SIGTERM, with a configurable deadline.
+Clients reconnect automatically, but interrupted requests aren't replayed. On SIGINT/SIGTERM, `tunnelproxy` stops accepting new traffic and lets active connections finish, up to a configurable deadline.
 
 ## Explore the code
 
@@ -109,11 +141,11 @@ Run `make test` for race-enabled tests, or `make vet` for static checks.
 
 ## How does it compare?
 
-All of these can connect a private service to a reachable endpoint. The main difference is who runs that endpoint and how much infrastructure you want to own.
+All of these can make a private service publicly reachable. Key differences are who operates the public endpoint, where TLS terminates, and which protocols they support.
 
 | Tool | Good fit | Trade-off |
 | --- | --- | --- |
-| **tunnel** | Your own server and hostname, client-side HTTPS termination, or a Go `net.Listener` integration. | You operate the public server, DNS, firewall, and access approvals. Focused on HTTP and hostname-routed TLS, not arbitrary public TCP/UDP. |
+| **tunnel** | Self-hosted SNI routing for web services, HTTPS termination on the application machine, or Go `net.Listener` integration. | You manage the public server, DNS, firewall, and access approvals. Supports SNI-routed TLS and opt-in plain HTTP, not arbitrary public TCP/UDP forwarding. |
 | **[ngrok](https://ngrok.com/)** | A managed public endpoint with minimal setup and traffic-management features. | The usual hosted workflow depends on ngrok's service; features and limits vary by plan. |
 | **[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/)** (`cloudflared`) | Publishing applications through Cloudflare, with optional Cloudflare Access policies. | The standard public-hostname workflow uses Cloudflare's DNS and edge; public HTTPS terminates there. |
 | **[frp](https://github.com/fatedier/frp)** | Self-hosted forwarding across a broader range of protocols, including TCP and UDP. | You operate the server and configure forwarding; its model is broader than this project's web-service and Go-listener focus. |

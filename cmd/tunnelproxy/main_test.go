@@ -205,8 +205,10 @@ func appCertificate(t *testing.T, dir string) (tls.Certificate, *x509.CertPool) 
 	return cert, roots
 }
 func TestJoinServeModesAndSignalDrain(t *testing.T) {
-	for _, mode := range []string{"http", "byo", "raw", "private"} {
-		t.Run(mode, func(t *testing.T) {
+	for _, variant := range []string{"http", "byo", "raw", "private", "http-auth", "byo-auth", "raw-auth", "private-auth"} {
+		t.Run(variant, func(t *testing.T) {
+			mode := strings.TrimSuffix(variant, "-auth")
+			withAuth := variant != mode
 			a, err := transportpki.Open(tunnel.MemoryStorage(), "example.com", time.Now())
 			if err != nil {
 				t.Fatal(err)
@@ -265,6 +267,9 @@ func TestJoinServeModesAndSignalDrain(t *testing.T) {
 			}
 			args := append([]string{"serve"}, common...)
 			args = append(args, "-t", target, "-m", mode, "--drain-timeout", "2s")
+			if withAuth {
+				args = append(args, "--basicauth=user:secret", "--basicauth=colleague:another-secret")
+			}
 			if mode == "byo" {
 				args = append(args, "--cert", filepath.Join(dir, "cert.pem"), "--key", filepath.Join(dir, "key.pem"))
 			}
@@ -298,6 +303,31 @@ func TestJoinServeModesAndSignalDrain(t *testing.T) {
 			resp, err := client.Get(scheme + "://app.example.com/")
 			if err != nil {
 				t.Fatal(err)
+			}
+			if withAuth && mode != "raw" {
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+				if resp.StatusCode != http.StatusUnauthorized {
+					t.Fatalf("unauthenticated status %d", resp.StatusCode)
+				}
+				request, err := http.NewRequest(http.MethodGet, scheme+"://app.example.com/", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, pair := range [][2]string{{"user", "secret"}, {"colleague", "another-secret"}} {
+					request.SetBasicAuth(pair[0], pair[1])
+					resp, err = client.Do(request)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if resp.StatusCode != http.StatusOK {
+						t.Fatalf("identity %s: status %d", pair[0], resp.StatusCode)
+					}
+					if pair[0] == "user" {
+						_, _ = io.Copy(io.Discard, resp.Body)
+						_ = resp.Body.Close()
+					}
+				}
 			}
 			if mode == "byo" && resp.ProtoMajor != 2 {
 				t.Fatalf("browser should negotiate HTTP/2, got %s", resp.Proto)
