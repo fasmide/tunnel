@@ -48,6 +48,36 @@ Use `github.com/fasmide/tunnel` to obtain a `net.Listener` for your Go server, w
 
 Each command-line tool supports `--help`; subcommands have their own help too.
 
+## Where things happen
+
+Serving modes configure the **application side**. In every mode, `tunneld` authenticates tunnel clients, enforces approved hostname grants, and forwards traffic over encrypted QUIC. This transport security is separate from the browser's HTTPS connection.
+
+For public TLS, the daemon reads the hostname from SNI and relays the TLS bytes without decrypting application traffic:
+
+| Mode | What `tunneld` does | Where public TLS terminates | HTTPS certificate source |
+| --- | --- | --- | --- |
+| `acme` (default) | Reads SNI and relays TLS bytes, including ACME validation traffic | `tunnelproxy` | ACME CA; obtained and cached on the application machine |
+| `private` | Reads SNI and relays TLS bytes; also signs authorized certificate requests | `tunnelproxy` | Daemon's generated constrained CA |
+| `byo` | Reads SNI and relays TLS bytes | `tunnelproxy` | Operator-supplied certificate and key |
+| `raw` | Reads SNI and relays TLS bytes | Local target service | Managed by the target service |
+| `http` | Parses HTTP and routes by Host | No public TLS | None |
+
+With the Go package, your application takes the place of `tunnelproxy` and chooses the corresponding listener API.
+
+### Certificates and trust
+
+- **ACME happens locally:** the application-side client obtains and renews certificates. The daemon forwards TLS-ALPN-01 validation connections; it does not manage the ACME account or hold application HTTPS keys.
+- **Private mode adds a signing role:** the application generates its key locally and submits a CSR. The daemon checks hostname ownership and signs it. This requires the daemon's generated CA, which browsers must separately trust. The CA is a trust authority for these sites: its holder can issue other certificates for the same names even though application keys remain local.
+- **BYO and raw need no daemon certificate management:** BYO loads keys in the proxy; raw leaves all TLS handling to the target. Public HTTPS certificates are distinct from the daemon's QUIC transport certificate.
+
+### Authentication and plain HTTP
+
+Daemon approval controls **who may publish a hostname**, not who may visit it. Optional Basic, cookie, and public client-certificate authentication run locally in `tunnelproxy`, never in `tunneld`. In raw mode, configure visitor authentication on the target instead.
+
+HTTP mode is the exception to encrypted public traffic: the browser-to-daemon leg is plaintext, so the daemon can see requests, responses, and credentials. It forwards one HTTP/1.x request/response exchange per connection, without CONNECT or upgrades such as WebSockets. If no eligible HTTP listener exists, the daemon returns a **308 redirect to HTTPS**.
+
+The daemon records the advertised mode but groups `acme`, `private`, `byo`, and `raw` into the same TLS forwarding class; `http` uses a separate HTTP class. The mode changes where certificates and application protocols are handled—not whether the tunnel itself is encrypted.
+
 ## Development
 
 Run `make test` for race-enabled tests or `make vet` for static checks. Tests require curl and OpenSSL 3+ for the [client-certificate interoperability test](https://github.com/fasmide/tunnel/blob/main/cmd/tunnelproxy/README.md#interoperability-test).
