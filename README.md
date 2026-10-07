@@ -104,6 +104,28 @@ All modes accept the flag, with two important caveats:
 - **`http`:** authentication works, but credentials travel unencrypted between the browser and public server. The encrypted QUIC tunnel does not protect that leg; the proxy prints a warning.
 - **`raw`:** the proxy cannot inspect HTTP inside the passed-through TLS connection. It prints a warning and does **not** enforce Basic authentication or generate a password. Configure authentication on your target service instead.
 
+### Browser sign-in with cookie authentication
+
+Use `--cookieauth` instead of `--basicauth` to present a local sign-in page with Username and Password fields. The flags are mutually exclusive. Cookie authentication supports the same repeatable identities, plaintext passwords, bcrypt hashes, empty usernames, generated passwords, and bcrypt suggestions:
+
+```sh
+./bin/tunnelproxy serve \
+  --server tunnel.example.net \
+  --name app.tunnel.example.net \
+  --target 127.0.0.1:8080 \
+  --cookieauth='alice:password' \
+  --cookieauth='bob:$2b$…' \
+  --cookieauth-duration=12h
+```
+
+Use a complete bcrypt hash in place of the abbreviated example. Bare `--cookieauth` generates a password; `--cookieauth=':password'` ignores the submitted username. The default session lifetime is **24 hours**, measured from successful sign-in (not sliding). `--cookieauth-duration` accepts Go durations such as `30m` or `12h`, requires cookie authentication, and must be at least one second.
+
+Browser HTML requests redirect to `/_tunnelproxy/auth/login`, then return to their original local URL after successful sign-in. Unauthenticated API requests, POSTs, and WebSocket upgrades receive `401`; submitted requests are not replayed. Visit `/_tunnelproxy/auth/logout` for a sign-out confirmation form. These two paths are reserved by the proxy.
+
+Sessions use HMAC-SHA-256 signed tokens, not JWTs, with a random in-memory signing key. Restarting invalidates every session; tunnel reconnects do not. Tokens are host-bound, contain no passwords or password hashes, and expire server-side. Cookies are host-only, HttpOnly, SameSite=Lax, and Secure in HTTPS modes. The proxy strips its session and CSRF cookies before forwarding and blocks the backend from setting those reserved cookies, while preserving application cookies and Authorization headers.
+
+Login and logout use CSRF tokens and same-origin checks. Forms have bounded sizes and password verification has a concurrency limit, but there is no per-client brute-force rate limiter. In `http` mode passwords and session cookies are exposed on the browser-to-server leg; the proxy warns and uses non-Secure cookies. In `raw` mode cookie authentication cannot be enforced and the proxy warns without generating passwords. Cookie authentication does not replace the application's own CSRF protection. Sign-out clears browser cookies but does not revoke a copied token before its expiry; restarting revokes all tokens. Expiry does not close an already-established WebSocket connection.
+
 ## Help and completion
 
 Every tool supports `--help`; subcommands have their own help too:

@@ -13,6 +13,8 @@ import (
 	"math/big"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -205,10 +207,11 @@ func appCertificate(t *testing.T, dir string) (tls.Certificate, *x509.CertPool) 
 	return cert, roots
 }
 func TestJoinServeModesAndSignalDrain(t *testing.T) {
-	for _, variant := range []string{"http", "byo", "raw", "private", "http-auth", "byo-auth", "raw-auth", "private-auth"} {
+	for _, variant := range []string{"http", "byo", "raw", "private", "http-auth", "byo-auth", "raw-auth", "private-auth", "http-cookie", "byo-cookie", "raw-cookie", "private-cookie"} {
 		t.Run(variant, func(t *testing.T) {
-			mode := strings.TrimSuffix(variant, "-auth")
-			withAuth := variant != mode
+			mode := strings.TrimSuffix(strings.TrimSuffix(variant, "-auth"), "-cookie")
+			withAuth := strings.HasSuffix(variant, "-auth")
+			withCookie := strings.HasSuffix(variant, "-cookie")
 			a, err := transportpki.Open(tunnel.MemoryStorage(), "example.com", time.Now())
 			if err != nil {
 				t.Fatal(err)
@@ -270,6 +273,9 @@ func TestJoinServeModesAndSignalDrain(t *testing.T) {
 			if withAuth {
 				args = append(args, "--basicauth=user:secret", "--basicauth=colleague:another-secret")
 			}
+			if withCookie {
+				args = append(args, "--cookieauth=user:secret", "--cookieauth=colleague:another-secret")
+			}
 			if mode == "byo" {
 				args = append(args, "--cert", filepath.Join(dir, "cert.pem"), "--key", filepath.Join(dir, "key.pem"))
 			}
@@ -322,6 +328,47 @@ func TestJoinServeModesAndSignalDrain(t *testing.T) {
 					}
 					if resp.StatusCode != http.StatusOK {
 						t.Fatalf("identity %s: status %d", pair[0], resp.StatusCode)
+					}
+					if pair[0] == "user" {
+						_, _ = io.Copy(io.Discard, resp.Body)
+						_ = resp.Body.Close()
+					}
+				}
+			}
+			if withCookie && mode != "raw" {
+				_ = resp.Body.Close()
+				if resp.StatusCode != http.StatusUnauthorized {
+					t.Fatalf("unauthenticated cookie status %d", resp.StatusCode)
+				}
+				jar, err := cookiejar.New(nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				client.Jar = jar
+				baseURL := scheme + "://app.example.com"
+				for _, pair := range [][2]string{{"user", "secret"}, {"colleague", "another-secret"}} {
+					page, err := client.Get(baseURL + authLoginPath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					_, _ = io.Copy(io.Discard, page.Body)
+					_ = page.Body.Close()
+					csrf := ""
+					loginURL, err := url.Parse(baseURL + authLoginPath)
+					if err != nil {
+						t.Fatal(err)
+					}
+					for _, c := range jar.Cookies(loginURL) {
+						if strings.HasSuffix(c.Name, "-csrf") {
+							csrf = c.Value
+						}
+					}
+					resp, err = client.PostForm(baseURL+authLoginPath, url.Values{"csrf": {csrf}, "username": {pair[0]}, "password": {pair[1]}, "return": {"/"}})
+					if err != nil {
+						t.Fatal(err)
+					}
+					if resp.StatusCode != http.StatusOK {
+						t.Fatalf("cookie login %s: %d", pair[0], resp.StatusCode)
 					}
 					if pair[0] == "user" {
 						_, _ = io.Copy(io.Discard, resp.Body)

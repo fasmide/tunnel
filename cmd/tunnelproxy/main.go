@@ -29,6 +29,9 @@ type config struct {
 	tofu                                                                                  bool
 	basicAuth                                                                             []string
 	basicAuthEnabled                                                                      bool
+	cookieAuth                                                                            []string
+	cookieAuthEnabled                                                                     bool
+	cookieAuthDuration                                                                    time.Duration
 	setupTimeout, drainTimeout, dialTimeout                                               time.Duration
 }
 
@@ -58,6 +61,13 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 			child.Example += " --target 127.0.0.1:8080"
 			serving := child.Flags()
 			serving.StringArrayVar(&c.basicAuth, "basicauth", nil, "add an allowed Basic auth identity (repeatable): bare flag generates a password; use --basicauth=user:password or user:bcrypt-hash; empty user accepts any username (raw mode cannot enforce auth)")
+			serving.StringArrayVar(&c.cookieAuth, "cookieauth", nil, "add a sign-in identity (repeatable): bare flag generates a password; use --cookieauth=user:password or user:bcrypt-hash; empty user accepts any username (raw mode cannot enforce auth)")
+			serving.Lookup("cookieauth").NoOptDefVal = "generate"
+			serving.DurationVar(&c.cookieAuthDuration, "cookieauth-duration", 24*time.Hour, "session lifetime from login; restarting invalidates all sessions")
+			child.MarkFlagsMutuallyExclusive("basicauth", "cookieauth")
+			_ = child.RegisterFlagCompletionFunc("cookieauth", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			})
 			serving.Lookup("basicauth").NoOptDefVal = "generate"
 			_ = child.RegisterFlagCompletionFunc("basicauth", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 				return nil, cobra.ShellCompDirectiveNoFileComp
@@ -79,12 +89,21 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 		child.RunE = func(cmd *cobra.Command, args []string) error {
 			c.command = cmd.Name()
 			c.basicAuthEnabled = cmd.Flags().Changed("basicauth")
-			for i, value := range c.basicAuth {
-				if value == "" {
-					return errors.New("--basicauth= requires credentials; use bare --basicauth to generate a password")
-				}
-				if value == "generate" {
-					c.basicAuth[i] = ""
+			c.cookieAuthEnabled = cmd.Flags().Changed("cookieauth")
+			if cmd.Flags().Changed("cookieauth-duration") && !c.cookieAuthEnabled {
+				return errors.New("--cookieauth-duration requires --cookieauth")
+			}
+			for _, flag := range []struct {
+				name   string
+				values []string
+			}{{"basicauth", c.basicAuth}, {"cookieauth", c.cookieAuth}} {
+				for i, value := range flag.values {
+					if value == "" {
+						return fmt.Errorf("--%s= requires credentials; use bare --%s to generate a password", flag.name, flag.name)
+					}
+					if value == "generate" {
+						flag.values[i] = ""
+					}
 				}
 			}
 			validated, err := validateConfig(*c)
@@ -138,15 +157,23 @@ func validateConfig(c config) (config, error) {
 		}
 		c.state = filepath.Join(dir, "tunnelproxy")
 	}
-	for i, value := range c.basicAuth {
-		if value != "" {
-			if _, err := parseBasicAuth(value); err != nil {
-				return c, fmt.Errorf("Basic auth identity %d: %w", i+1, err)
+	if c.basicAuthEnabled && c.cookieAuthEnabled {
+		return c, errors.New("--basicauth and --cookieauth are mutually exclusive")
+	}
+	if c.cookieAuthEnabled && c.cookieAuthDuration < time.Second {
+		return c, errors.New("--cookieauth-duration must be at least 1s")
+	}
+	for _, values := range [][]string{c.basicAuth, c.cookieAuth} {
+		for i, value := range values {
+			if value != "" {
+				if _, err := parseBasicAuth(value); err != nil {
+					return c, fmt.Errorf("authentication identity %d: %w", i+1, err)
+				}
 			}
 		}
 	}
 	if c.command == "join" {
-		if c.target != "" || c.cert != "" || c.key != "" || c.mode != "acme" || c.email != "" || c.basicAuthEnabled {
+		if c.target != "" || c.cert != "" || c.key != "" || c.mode != "acme" || c.email != "" || c.basicAuthEnabled || c.cookieAuthEnabled {
 			return c, errors.New("forwarding options require serve or joinserve")
 		}
 	} else {
@@ -439,7 +466,14 @@ func serveClient(ctx context.Context, c config, client *tunnel.Client, l net.Lis
 	if c.mode == "raw" {
 		return forward(ctx, client, l, addresses, c.dialTimeout, c.drainTimeout, out)
 	}
-	return forwardHTTP(ctx, client, l, addresses, c.dialTimeout, c.drainTimeout, c.mode == "http", auth, out)
+	var cookies *cookieAuth
+	if c.cookieAuthEnabled {
+		cookies, err = newCookieAuth(auth, c.cookieAuthDuration, c.mode != "http")
+		if err != nil {
+			return fmt.Errorf("initialize cookie authentication: %w", err)
+		}
+	}
+	return forwardHTTP(ctx, client, l, addresses, c.dialTimeout, c.drainTimeout, c.mode == "http", auth, cookies, out)
 }
 
 type pair struct{ public, local net.Conn }
