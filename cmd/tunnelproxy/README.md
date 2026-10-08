@@ -80,7 +80,7 @@ Keep state directories private and persistent.
 
 Authentication is optional. For a public-facing site, leave the authentication flags out: visitors can reach your local service without signing in to the proxy.
 
-To restrict visitors, choose one method for `serve` or `joinserve`: Basic, cookie, certificate fingerprints, or client CA trust. These methods are mutually exclusive.
+To restrict visitors, choose one method for `serve` or `joinserve`: Basic, cookie, Bearer tokens, certificate fingerprints, or client CA trust. These methods are mutually exclusive.
 
 Daemon approval allows **your tunnel client** to publish a hostname; proxy authentication controls **who can visit** that hostname. Your application can still manage its own accounts and permissions—for example, which signed-in users may edit content.
 
@@ -137,6 +137,56 @@ Browser HTML requests redirect to `/_tunnelproxy/auth/login`, then return to the
 Sessions use HMAC-SHA-256 signed tokens, not JWTs, with a random in-memory signing key. Restarting invalidates every session; tunnel reconnects do not. Tokens are host-bound, contain no passwords or password hashes, and expire server-side. Cookies are host-only, HttpOnly, SameSite=Lax, and Secure in HTTPS modes. The proxy strips its session and CSRF cookies before forwarding and blocks the backend from setting those reserved cookies, while preserving application cookies and Authorization headers.
 
 Login and logout use CSRF tokens and same-origin checks. Forms have bounded sizes and password verification has a concurrency limit, but there is no per-client brute-force rate limiter. In `http` mode passwords and session cookies are exposed on the browser-to-server leg; the proxy warns and uses non-Secure cookies. In `raw` mode cookie authentication cannot be enforced and the proxy warns without generating passwords. Cookie authentication does not replace the application's own CSRF protection. Sign-out clears browser cookies but does not revoke a copied token before its expiry; restarting revokes all tokens. Expiry does not close an already-established WebSocket connection.
+
+### API access with Bearer tokens
+
+Add `--bearerauth` to `serve` or `joinserve` to generate a random token:
+
+```sh
+./bin/tunnelproxy serve \
+  --server tunnel.example.net \
+  --name app.tunnel.example.net \
+  --target 127.0.0.1:8080 \
+  --bearerauth
+```
+
+Both `--bearerauth` and `--bearerauth=` generate a fresh 256-bit token. Each
+repeated empty flag generates an independent token. The proxy prints generated
+tokens; they are not saved and change on restart, but not on tunnel reconnect.
+Anyone with access to these logs can use them. Share tokens through a trusted
+channel.
+
+Supply tokens explicitly to keep them across restarts or allow multiple callers:
+
+```sh
+# Add these flags to serve or joinserve (replace the example values):
+--bearerauth=FIRST_SECRET_TOKEN --bearerauth=SECOND_SECRET_TOKEN
+
+curl -H "Authorization: Bearer $TOKEN" https://app.tunnel.example.net/
+```
+
+Use the `=` spelling for supplied values. Tokens are opaque, case-sensitive
+shared secrets, not JWTs; there are no claims, expiry, or signature checks.
+Allowed characters are letters, digits, `-._~+/`, followed by optional `=`
+padding. Whitespace and commas are rejected. Use long randomly generated secrets,
+not passwords or guessable strings. Supplied tokens are never logged, but command
+lines may expose them through shell history and process listings. The prepared
+policy stores SHA-256 digests and compares them in constant time; it does not
+provide password stretching or a per-client brute-force rate limiter.
+
+Authentication runs locally before HTTP forwarding, including WebSocket upgrades.
+Missing, malformed, duplicate, or incorrect Authorization headers receive `401`
+and a Bearer challenge. Tokens are accepted only in `Authorization`, never in
+query parameters or cookies. The proxy strips the accepted Authorization header
+before forwarding, so backend Authorization-based authentication cannot use the
+same request. Bearer authentication is mutually exclusive with the other proxy
+authentication methods.
+
+Bearer authentication works in `acme`, `private`, `byo`, and `http` modes. Plain
+`http` exposes tokens on the public connection and prints a warning. `raw` mode
+is rejected because passthrough TLS cannot be inspected. To revoke a supplied
+token, remove it and restart; existing WebSocket connections are not rechecked
+per message.
 
 ## Client certificates: start with curl
 
@@ -300,7 +350,7 @@ CA trust and fingerprint enrollment are alternative policies; they cannot be com
 
 - Client-certificate authentication is available on `serve` and `joinserve` in **acme**, **private**, and **byo** modes.
 - **http** and **raw** reject it rather than silently exposing an unprotected service. In raw mode, configure client authentication on the target TLS service instead.
-- `--clientcertauth`, `--clientcertauth-ca`, `--basicauth`, and `--cookieauth` are mutually exclusive.
+- `--clientcertauth`, `--clientcertauth-ca`, `--basicauth`, `--cookieauth`, and `--bearerauth` are mutually exclusive.
 - Authentication happens locally before HTTP, including HTTP/2 and WebSocket upgrades. Failures produce TLS errors, not a sign-in page.
 - ACME TLS-ALPN-01 validation connections are exempt and never reach the application.
 - Certificate checks apply to resumed TLS connections too. Established connections are not rechecked on every HTTP request or closed merely because a certificate expires.

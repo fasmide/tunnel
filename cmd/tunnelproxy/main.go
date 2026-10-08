@@ -32,6 +32,8 @@ type config struct {
 	cookieAuth                                                                            []string
 	cookieAuthEnabled                                                                     bool
 	cookieAuthDuration                                                                    time.Duration
+	bearerAuth                                                                            []string
+	bearerAuthEnabled                                                                     bool
 	clientCertAuth                                                                        []string
 	clientCertAuthCA                                                                      string
 	setupTimeout, drainTimeout, dialTimeout                                               time.Duration
@@ -64,6 +66,11 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 			serving := child.Flags()
 			serving.StringArrayVar(&c.basicAuth, "basicauth", nil, "add an allowed Basic auth identity (repeatable): bare flag generates a password; use --basicauth=user:password or user:bcrypt-hash; empty user accepts any username (raw mode cannot enforce auth)")
 			serving.StringArrayVar(&c.cookieAuth, "cookieauth", nil, "add a sign-in identity (repeatable): bare flag generates a password; use --cookieauth=user:password or user:bcrypt-hash; empty user accepts any username (raw mode cannot enforce auth)")
+			serving.StringArrayVar(&c.bearerAuth, "bearerauth", nil, "add an allowed Bearer token (repeatable): bare flag or empty value generates a token; use --bearerauth=token (not available in raw mode)")
+			serving.Lookup("bearerauth").NoOptDefVal = "<generated>"
+			_ = child.RegisterFlagCompletionFunc("bearerauth", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+				return nil, cobra.ShellCompDirectiveNoFileComp
+			})
 			serving.Lookup("cookieauth").NoOptDefVal = "generate"
 			serving.DurationVar(&c.cookieAuthDuration, "cookieauth-duration", 24*time.Hour, "session lifetime from login; restarting invalidates all sessions")
 			serving.StringArrayVar(&c.clientCertAuth, "clientcertauth", nil, "allow a client certificate SHA-256 fingerprint (repeatable; hex with optional colons; TLS modes only)")
@@ -72,7 +79,7 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 			_ = child.RegisterFlagCompletionFunc("clientcertauth", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			})
-			child.MarkFlagsMutuallyExclusive("basicauth", "cookieauth", "clientcertauth", "clientcertauth-ca")
+			child.MarkFlagsMutuallyExclusive("basicauth", "cookieauth", "bearerauth", "clientcertauth", "clientcertauth-ca")
 			_ = child.RegisterFlagCompletionFunc("cookieauth", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			})
@@ -98,6 +105,13 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 			c.command = cmd.Name()
 			c.basicAuthEnabled = cmd.Flags().Changed("basicauth")
 			c.cookieAuthEnabled = cmd.Flags().Changed("cookieauth")
+			c.bearerAuthEnabled = cmd.Flags().Changed("bearerauth")
+			for i, value := range c.bearerAuth {
+				// This marker is outside the Bearer token grammar and denotes a bare flag.
+				if value == "<generated>" {
+					c.bearerAuth[i] = ""
+				}
+			}
 			if cmd.Flags().Changed("clientcertauth-ca") && c.clientCertAuthCA == "" {
 				return errors.New("--clientcertauth-ca requires a PEM CA bundle path")
 			}
@@ -169,13 +183,13 @@ func validateConfig(c config) (config, error) {
 		c.state = filepath.Join(dir, "tunnelproxy")
 	}
 	methods := 0
-	for _, enabled := range []bool{c.basicAuthEnabled, c.cookieAuthEnabled, len(c.clientCertAuth) > 0, c.clientCertAuthCA != ""} {
+	for _, enabled := range []bool{c.basicAuthEnabled, c.cookieAuthEnabled, c.bearerAuthEnabled, len(c.clientCertAuth) > 0, c.clientCertAuthCA != ""} {
 		if enabled {
 			methods++
 		}
 	}
 	if methods > 1 {
-		return c, errors.New("--basicauth, --cookieauth, --clientcertauth and --clientcertauth-ca are mutually exclusive")
+		return c, errors.New("--basicauth, --cookieauth, --bearerauth, --clientcertauth and --clientcertauth-ca are mutually exclusive")
 	}
 	if len(c.clientCertAuth) > 0 || c.clientCertAuthCA != "" {
 		if c.command == "join" || c.mode == "http" || c.mode == "raw" {
@@ -184,6 +198,16 @@ func validateConfig(c config) (config, error) {
 		for _, value := range c.clientCertAuth {
 			if _, err := parseClientCertFingerprint(value); err != nil {
 				return c, err
+			}
+		}
+	}
+	if c.bearerAuthEnabled {
+		if c.mode == "raw" {
+			return c, errors.New("--bearerauth cannot be enforced in raw mode")
+		}
+		for _, token := range c.bearerAuth {
+			if token != "" && !validBearerToken(token) {
+				return c, errors.New("--bearerauth requires a token with Bearer token characters and no whitespace")
 			}
 		}
 	}
@@ -200,7 +224,7 @@ func validateConfig(c config) (config, error) {
 		}
 	}
 	if c.command == "join" {
-		if c.target != "" || c.cert != "" || c.key != "" || c.mode != "acme" || c.email != "" || c.basicAuthEnabled || c.cookieAuthEnabled {
+		if c.target != "" || c.cert != "" || c.key != "" || c.mode != "acme" || c.email != "" || c.basicAuthEnabled || c.cookieAuthEnabled || c.bearerAuthEnabled {
 			return c, errors.New("forwarding options require serve or joinserve")
 		}
 	} else {
@@ -508,7 +532,11 @@ func serveClient(ctx context.Context, c config, client *tunnel.Client, l net.Lis
 			return fmt.Errorf("initialize cookie authentication: %w", err)
 		}
 	}
-	return forwardHTTP(ctx, client, l, addresses, c.dialTimeout, c.drainTimeout, c.mode == "http", auth, cookies, out)
+	bearers, err := prepareBearerAuth(c, out)
+	if err != nil {
+		return err
+	}
+	return forwardHTTP(ctx, client, l, addresses, c.dialTimeout, c.drainTimeout, c.mode == "http", auth, cookies, bearers, out)
 }
 
 type pair struct{ public, local net.Conn }

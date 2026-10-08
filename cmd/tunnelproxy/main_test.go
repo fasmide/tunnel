@@ -207,9 +207,10 @@ func appCertificate(t *testing.T, dir string) (tls.Certificate, *x509.CertPool) 
 	return cert, roots
 }
 func TestJoinServeModesAndSignalDrain(t *testing.T) {
-	for _, variant := range []string{"http", "byo", "raw", "private", "http-auth", "byo-auth", "raw-auth", "private-auth", "http-cookie", "byo-cookie", "raw-cookie", "private-cookie", "byo-clientcert", "private-clientcert"} {
+	for _, variant := range []string{"http", "byo", "raw", "private", "http-auth", "byo-auth", "raw-auth", "private-auth", "http-cookie", "byo-cookie", "raw-cookie", "private-cookie", "byo-clientcert", "private-clientcert", "http-bearer", "byo-bearer", "private-bearer"} {
 		t.Run(variant, func(t *testing.T) {
-			mode := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(variant, "-auth"), "-cookie"), "-clientcert")
+			mode := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(variant, "-auth"), "-cookie"), "-clientcert"), "-bearer")
+			withBearer := strings.HasSuffix(variant, "-bearer")
 			withClientCert := strings.HasSuffix(variant, "-clientcert")
 			clientCert, clientLeaf, _ := makeClientCertificate(t, nil, nil, x509.ExtKeyUsageClientAuth, false)
 			withAuth := strings.HasSuffix(variant, "-auth")
@@ -248,7 +249,12 @@ func TestJoinServeModesAndSignalDrain(t *testing.T) {
 			backendDone := make(chan struct{})
 			go func() {
 				defer close(backendDone)
-				_ = http.Serve(service, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, "existing service") }))
+				_ = http.Serve(service, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if withBearer && r.Header.Get("Authorization") != "" {
+						t.Error("bearer token reached backend")
+					}
+					_, _ = io.WriteString(w, "existing service")
+				}))
 			}()
 			// Full CLI join path, using fingerprint-verified generated transport trust.
 			common := []string{"-s", s.Addr(), "--server-name", "tunnel.example.com", "-n", "app.example.com", "--state", dir}
@@ -277,6 +283,9 @@ func TestJoinServeModesAndSignalDrain(t *testing.T) {
 			}
 			if withCookie {
 				args = append(args, "--cookieauth=user:secret", "--cookieauth=colleague:another-secret")
+			}
+			if withBearer {
+				args = append(args, "--bearerauth=first-token", "--bearerauth=second-token")
 			}
 			if withClientCert {
 				args = append(args, "--clientcertauth="+certPin(clientLeaf))
@@ -343,6 +352,34 @@ func TestJoinServeModesAndSignalDrain(t *testing.T) {
 						t.Fatalf("identity %s: status %d", pair[0], resp.StatusCode)
 					}
 					if pair[0] == "user" {
+						_, _ = io.Copy(io.Discard, resp.Body)
+						_ = resp.Body.Close()
+					}
+				}
+			}
+			if withBearer {
+				_ = resp.Body.Close()
+				if resp.StatusCode != http.StatusUnauthorized {
+					t.Fatalf("unauthenticated bearer status %d", resp.StatusCode)
+				}
+				for i, token := range []string{"wrong-token", "first-token", "second-token"} {
+					request, err := http.NewRequest(http.MethodGet, scheme+"://app.example.com/", nil)
+					if err != nil {
+						t.Fatal(err)
+					}
+					request.Header.Set("Authorization", "Bearer "+token)
+					resp, err = client.Do(request)
+					if err != nil {
+						t.Fatal(err)
+					}
+					want := http.StatusOK
+					if i == 0 {
+						want = http.StatusUnauthorized
+					}
+					if resp.StatusCode != want {
+						t.Fatalf("bearer status %d, want %d", resp.StatusCode, want)
+					}
+					if i < 2 {
 						_, _ = io.Copy(io.Discard, resp.Body)
 						_ = resp.Body.Close()
 					}
