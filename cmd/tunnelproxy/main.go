@@ -22,6 +22,7 @@ import (
 	"github.com/fasmide/tunnel"
 	"github.com/fasmide/tunnel/internal/cli"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 type config struct {
@@ -39,6 +40,9 @@ type config struct {
 	setupTimeout, drainTimeout, dialTimeout                                               time.Duration
 }
 
+// pflag requires a nonempty default to accept a bare string flag.
+const authGenerationMarker = "<generated>"
+
 func newCommand(c *config, action func(config) error) *cobra.Command {
 	*c = config{mode: "acme", setupTimeout: 30 * time.Second, drainTimeout: 30 * time.Second, dialTimeout: 10 * time.Second}
 	root := &cobra.Command{
@@ -46,6 +50,20 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 		Long:         "Connect outward to a tunnel daemon and expose a loopback service.\nAccess requires an approved identity; HTTPS terminates on this machine.",
 		SilenceUsage: true, SilenceErrors: true,
 	}
+	// Keep optional-value parsing, but omit its internal generation marker from help.
+	cobra.AddTemplateFunc("proxyFlagUsages", func(flags *pflag.FlagSet) string {
+		display := pflag.NewFlagSet("help", pflag.ContinueOnError)
+		flags.VisitAll(func(flag *pflag.Flag) {
+			copy := *flag
+			switch copy.Name {
+			case "basicauth", "cookieauth", "bearerauth":
+				copy.NoOptDefVal = ""
+			}
+			display.AddFlag(&copy)
+		})
+		return display.FlagUsages()
+	})
+	root.SetUsageTemplate(strings.Replace(root.UsageTemplate(), ".LocalFlags.FlagUsages", "proxyFlagUsages .LocalFlags", 1))
 	flags := root.PersistentFlags()
 	flags.StringVarP(&c.server, "server", "s", "", "daemon QUIC hostname or host:port (default port 7443)")
 	flags.StringVarP(&c.name, "name", "n", "", "approved public name/subtree")
@@ -54,6 +72,9 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 	flags.StringVarP(&c.fingerprint, "fingerprint", "f", "", "bootstrap constrained CA using administrator SHA-256 hex fingerprint")
 	flags.BoolVar(&c.tofu, "tofu", false, "explicitly trust first constrained CA; first contact can be intercepted")
 	flags.DurationVar(&c.setupTimeout, "setup-timeout", c.setupTimeout, "join/dial setup deadline")
+	root.MarkFlagsMutuallyExclusive("fingerprint", "tofu")
+	// Check server/name in validateConfig: marking inherited flags required
+	// would also require them for Cobra's help and completion commands.
 	for _, spec := range []struct{ name, short string }{
 		{"join", "Submit an access request and exit"},
 		{"serve", "Serve using an existing approved identity"},
@@ -63,37 +84,53 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 			Example: "  tunnelproxy " + spec.name + " --server tunnel.example.net --name app.tunnel.example.net --fingerprint SHA256"}
 		if spec.name != "join" {
 			child.Example += " --target 127.0.0.1:8080"
+			child.Example += `
+
+  # Add one authentication method to the command above (repeat for more identities):
+  --basicauth                       # generate a password; accept any username
+  --basicauth='alice:password' --basicauth='bob:password'
+  --basicauth=':password'           # accept any username
+  --basicauth='alice:$2b$…'         # use a complete bcrypt hash; quote to avoid shell expansion
+  --cookieauth                      # generate a sign-in password
+  --cookieauth='alice:password' --cookieauth-duration=12h
+  # Cookie auth also supports bcrypt hashes and empty usernames, like Basic auth.
+  --bearerauth                      # generate a token
+  --bearerauth=TOKEN1 --bearerauth=TOKEN2
+  --clientcertauth=SHA256           # 64 hex digits, with optional colons
+  --clientcertauth-ca=clients.pem   # trust clients issued by a PEM CA bundle
+
+  # Basic/cookie auth cannot be enforced in raw mode; Bearer auth rejects raw mode.
+  # Client certificate auth requires acme, private or byo mode.
+  # HTTP mode exposes passwords and tokens on the public connection.
+
+  # Supply public HTTPS files, separate from daemon transport TLS:
+  --mode byo --cert=server.crt --key=server.key`
 			serving := child.Flags()
-			serving.StringArrayVar(&c.basicAuth, "basicauth", nil, "add an allowed Basic auth identity (repeatable): bare flag generates a password; use --basicauth=user:password or user:bcrypt-hash; empty user accepts any username (raw mode cannot enforce auth)")
-			serving.StringArrayVar(&c.cookieAuth, "cookieauth", nil, "add a sign-in identity (repeatable): bare flag generates a password; use --cookieauth=user:password or user:bcrypt-hash; empty user accepts any username (raw mode cannot enforce auth)")
-			serving.StringArrayVar(&c.bearerAuth, "bearerauth", nil, "add an allowed Bearer token (repeatable): bare flag or empty value generates a token; use --bearerauth=token (not available in raw mode)")
-			serving.Lookup("bearerauth").NoOptDefVal = "<generated>"
-			_ = child.RegisterFlagCompletionFunc("bearerauth", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
-				return nil, cobra.ShellCompDirectiveNoFileComp
-			})
-			serving.Lookup("cookieauth").NoOptDefVal = "generate"
-			serving.DurationVar(&c.cookieAuthDuration, "cookieauth-duration", 24*time.Hour, "session lifetime from login; restarting invalidates all sessions")
-			serving.StringArrayVar(&c.clientCertAuth, "clientcertauth", nil, "allow a client certificate SHA-256 fingerprint (repeatable; hex with optional colons; TLS modes only)")
-			serving.StringVar(&c.clientCertAuthCA, "clientcertauth-ca", "", "trust client certificates issued by this PEM CA bundle (TLS modes only)")
+			serving.StringArrayVar(&c.basicAuth, "basicauth", nil, "allow a Basic auth identity (repeatable)")
+			serving.StringArrayVar(&c.cookieAuth, "cookieauth", nil, "allow a sign-in identity (repeatable)")
+			serving.StringArrayVar(&c.bearerAuth, "bearerauth", nil, "allow a Bearer token (repeatable)")
+			for _, name := range []string{"basicauth", "cookieauth", "bearerauth"} {
+				serving.Lookup(name).NoOptDefVal = authGenerationMarker
+				_ = child.RegisterFlagCompletionFunc(name, func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+					return nil, cobra.ShellCompDirectiveNoFileComp
+				})
+			}
+			serving.DurationVar(&c.cookieAuthDuration, "cookieauth-duration", 24*time.Hour, "session lifetime from login")
+			serving.StringArrayVar(&c.clientCertAuth, "clientcertauth", nil, "allow a client certificate fingerprint (repeatable; TLS only)")
+			serving.StringVar(&c.clientCertAuthCA, "clientcertauth-ca", "", "trust a client certificate CA bundle (PEM; TLS only)")
 			_ = child.MarkFlagFilename("clientcertauth-ca", "pem", "crt")
 			_ = child.RegisterFlagCompletionFunc("clientcertauth", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			})
 			child.MarkFlagsMutuallyExclusive("basicauth", "cookieauth", "bearerauth", "clientcertauth", "clientcertauth-ca")
-			_ = child.RegisterFlagCompletionFunc("cookieauth", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
-				return nil, cobra.ShellCompDirectiveNoFileComp
-			})
-			serving.Lookup("basicauth").NoOptDefVal = "generate"
-			_ = child.RegisterFlagCompletionFunc("basicauth", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
-				return nil, cobra.ShellCompDirectiveNoFileComp
-			})
 			serving.StringVarP(&c.target, "target", "t", "", "loopback TCP service, e.g. 127.0.0.1:8080")
 			serving.StringVarP(&c.mode, "mode", "m", "acme", "public mode: acme, private, byo, raw, http")
-			serving.StringVar(&c.cert, "cert", "", "public certificate PEM for byo mode, not transport TLS")
-			serving.StringVar(&c.key, "key", "", "public private-key PEM for byo mode")
+			serving.StringVar(&c.cert, "cert", "", "public HTTPS certificate (PEM; byo mode)")
+			serving.StringVar(&c.key, "key", "", "public HTTPS private key (PEM; byo mode)")
 			serving.StringVar(&c.email, "acme-email", "", "ACME contact email (acme mode)")
 			serving.DurationVar(&c.drainTimeout, "drain-timeout", 30*time.Second, "SIGINT/SIGTERM drain deadline")
 			serving.DurationVar(&c.dialTimeout, "target-timeout", 10*time.Second, "local TCP dial deadline")
+			child.MarkFlagsRequiredTogether("cert", "key")
 			_ = child.MarkFlagRequired("target")
 			_ = child.MarkFlagFilename("cert", "pem", "crt")
 			_ = child.MarkFlagFilename("key", "pem", "key")
@@ -101,15 +138,17 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 				return []string{"acme", "private", "byo", "raw", "http"}, cobra.ShellCompDirectiveNoFileComp
 			})
 		}
-		child.RunE = func(cmd *cobra.Command, args []string) error {
+		child.PreRunE = func(cmd *cobra.Command, args []string) error {
 			c.command = cmd.Name()
 			c.basicAuthEnabled = cmd.Flags().Changed("basicauth")
 			c.cookieAuthEnabled = cmd.Flags().Changed("cookieauth")
 			c.bearerAuthEnabled = cmd.Flags().Changed("bearerauth")
-			for i, value := range c.bearerAuth {
-				// This marker is outside the Bearer token grammar and denotes a bare flag.
-				if value == "<generated>" {
-					c.bearerAuth[i] = ""
+			// Bare flags and explicit empty values both request generation.
+			for _, values := range [][]string{c.basicAuth, c.cookieAuth, c.bearerAuth} {
+				for i, value := range values {
+					if value == authGenerationMarker {
+						values[i] = ""
+					}
 				}
 			}
 			if cmd.Flags().Changed("clientcertauth-ca") && c.clientCertAuthCA == "" {
@@ -118,25 +157,15 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 			if cmd.Flags().Changed("cookieauth-duration") && !c.cookieAuthEnabled {
 				return errors.New("--cookieauth-duration requires --cookieauth")
 			}
-			for _, flag := range []struct {
-				name   string
-				values []string
-			}{{"basicauth", c.basicAuth}, {"cookieauth", c.cookieAuth}} {
-				for i, value := range flag.values {
-					if value == "" {
-						return fmt.Errorf("--%s= requires credentials; use bare --%s to generate a password", flag.name, flag.name)
-					}
-					if value == "generate" {
-						flag.values[i] = ""
-					}
-				}
-			}
 			validated, err := validateConfig(*c)
 			if err != nil {
 				return err
 			}
 			*c = validated
-			return action(validated)
+			return nil
+		}
+		child.RunE = func(*cobra.Command, []string) error {
+			return action(*c)
 		}
 		root.AddCommand(child)
 	}

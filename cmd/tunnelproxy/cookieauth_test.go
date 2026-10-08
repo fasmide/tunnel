@@ -61,7 +61,7 @@ func TestCookieAuthCLI(t *testing.T) {
 		if err != nil || !c.cookieAuthEnabled || len(c.cookieAuth) != 3 || c.cookieAuth[0] != "" || c.cookieAuthDuration != 12*time.Hour {
 			t.Fatalf("config %+v %v", c, err)
 		}
-		for _, flags := range [][]string{{"--cookieauth", "--basicauth"}, {"--cookieauth-duration=1h"}, {"--cookieauth", "--cookieauth-duration=0s"}, {"--cookieauth", "--cookieauth-duration=-1h"}, {"--cookieauth="}, {"--cookieauth=invalid", "--cookieauth=alice:valid"}} {
+		for _, flags := range [][]string{{"--cookieauth", "--basicauth"}, {"--cookieauth-duration=1h"}, {"--cookieauth", "--cookieauth-duration=0s"}, {"--cookieauth", "--cookieauth-duration=-1h"}, {"--cookieauth=generate"}, {"--cookieauth=invalid", "--cookieauth=alice:valid"}} {
 			if _, err := parse(append(append([]string{}, base...), flags...)); err == nil {
 				t.Fatalf("accepted %v", flags)
 			}

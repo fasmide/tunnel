@@ -80,7 +80,7 @@ Keep state directories private and persistent.
 
 Authentication is optional. For a public-facing site, leave the authentication flags out: visitors can reach your local service without signing in to the proxy.
 
-To restrict visitors, choose one method for `serve` or `joinserve`: Basic, cookie, Bearer tokens, certificate fingerprints, or client CA trust. These methods are mutually exclusive.
+To restrict visitors, choose one method for `serve` or `joinserve`: Basic, cookie, Bearer tokens, certificate fingerprints, or client CA trust. These methods are mutually exclusive. For Basic, cookie, and Bearer authentication, a bare flag or an empty value generates a secret; repeat the flag to generate more. Supplied values use the `--flag=value` spelling.
 
 Daemon approval allows **your tunnel client** to publish a hostname; proxy authentication controls **who can visit** that hostname. Your application can still manage its own accounts and permissions—for example, which signed-in users may edit content.
 

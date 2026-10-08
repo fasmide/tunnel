@@ -13,7 +13,7 @@ import (
 func TestRepeatedBasicAuthCLI(t *testing.T) {
 	for _, command := range []string{"serve", "joinserve"} {
 		base := []string{command, "-s", "tunnel.example.com", "-n", "app.example.com", "-t", "127.0.0.1:8080"}
-		args := append(append([]string{}, base...), "--basicauth=alice:first,with:punctuation", "--basicauth", "--basicauth=bob:second", "--basicauth")
+		args := append(append([]string{}, base...), "--basicauth=alice:first,with:punctuation", "--basicauth", "--basicauth=bob:second", "--basicauth=")
 		c, err := parse(args)
 		if err != nil {
 			t.Fatal(err)
@@ -30,7 +30,6 @@ func TestRepeatedBasicAuthCLI(t *testing.T) {
 		for _, flags := range [][]string{
 			{"--basicauth=invalid", "--basicauth=bob:valid"},
 			{"--basicauth=alice:valid", "--basicauth=invalid"},
-			{"--basicauth=", "--basicauth=bob:valid"},
 		} {
 			if _, err := parse(append(append([]string{}, base...), flags...)); err == nil {
 				t.Fatalf("accepted invalid identity in %v", flags)

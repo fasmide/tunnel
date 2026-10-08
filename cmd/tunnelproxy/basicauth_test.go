@@ -22,7 +22,7 @@ func TestBasicAuthCLI(t *testing.T) {
 			if mode == "byo" {
 				args = append(args, "--cert", "cert.pem", "--key", "key.pem")
 			}
-			for _, flag := range []string{"--basicauth", "--basicauth=user:secret", "--basicauth=user:with:colons", "--basicauth=:secret", "--basicauth=:" + string(hash), "--basicauth=user:" + string(hash)} {
+			for _, flag := range []string{"--basicauth", "--basicauth=", "--basicauth=user:secret", "--basicauth=user:with:colons", "--basicauth=:secret", "--basicauth=:" + string(hash), "--basicauth=user:" + string(hash)} {
 				c, err := parse(append(append([]string{}, args...), flag))
 				if err != nil || !c.basicAuthEnabled {
 					t.Fatalf("%s %s %s: %v", command, mode, flag, err)
@@ -32,7 +32,7 @@ func TestBasicAuthCLI(t *testing.T) {
 				}
 			}
 		}
-		for _, flag := range []string{"--basicauth=", "--basicauth=oops", "--basicauth=:", "--basicauth=user:", "--basicauth=user:$2b$garbage", "--basicauth=user:" + string(hash[:59]), "--basicauth=user:" + string(hash[:59]) + "!"} {
+		for _, flag := range []string{"--basicauth=generate", "--basicauth=oops", "--basicauth=:", "--basicauth=user:", "--basicauth=user:$2b$garbage", "--basicauth=user:" + string(hash[:59]), "--basicauth=user:" + string(hash[:59]) + "!"} {
 			if _, err := parse(append(append([]string{}, base...), flag)); err == nil {
 				t.Fatalf("accepted %s", flag)
 			}
