@@ -32,4 +32,4 @@ Share the fingerprint with application operators through a trusted channel. They
 
 Defaults are `/var/lib/tunneld` for private persistent state, `/run/tunneld/admin.sock` for administration, UDP `:7443` for QUIC, TCP `:443` for public TLS, and TCP `:80` for public HTTP. Flags can override these. Keep state persistent and private, and protect the local admin socket: it grants control over identities and routes.
 
-See [systemd deployment examples](https://github.com/fasmide/tunnel/tree/main/deploy/systemd) for service installation. Run `tunneld --help` for available options.
+See the example [tunneld.service](https://github.com/fasmide/tunnel/blob/main/deploy/systemd/tunneld.service); set its transport DNS domain before starting. Run `tunneld --help` for available options.

@@ -74,7 +74,7 @@ Outside HTTP mode, valid public HTTP requests redirect to HTTPS. Targets must re
 
 Clients reconnect automatically, but interrupted requests are not replayed. On SIGINT/SIGTERM, the proxy stops accepting new traffic and lets active connections finish up to `--drain-timeout` (default 30s). `--setup-timeout` controls join/dial setup and `--target-timeout` controls local target dialing.
 
-See [deploy/systemd](https://github.com/fasmide/tunnel/tree/main/deploy/systemd) for service units and configuration examples. Keep state directories private and persistent.
+Keep state directories private and persistent.
 
 ## Authentication
 

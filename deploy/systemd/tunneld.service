@@ -17,10 +17,11 @@ RuntimeDirectoryMode=0700
 WorkingDirectory=/var/lib/tunneld
 UMask=0077
 
-# Set your transport DNS base with a drop-in before the first start.
+# REQUIRED: set your real transport DNS base below before starting.
+# Left empty intentionally: tunneld refuses to start without a domain.
 # The generated constrained CA and its key persist in StateDirectory.
-Environment=TUNNELD_DOMAIN=tunnel.example.com
-ExecStart=/usr/local/bin/tunneld --state ${STATE_DIRECTORY} --socket ${RUNTIME_DIRECTORY}/admin.sock --domain ${TUNNELD_DOMAIN} --quic :7443 --https :443 --http :80
+Environment=TUNNELD_DOMAIN=
+ExecStart=/usr/local/bin/tunneld --state ${STATE_DIRECTORY} --socket ${RUNTIME_DIRECTORY}/admin.sock --domain=${TUNNELD_DOMAIN} --quic :7443 --https :443 --http :80
 
 Restart=on-failure
 RestartSec=5s
