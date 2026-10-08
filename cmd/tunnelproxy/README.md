@@ -8,6 +8,8 @@ See the [project README](https://github.com/fasmide/tunnel/blob/main/README.md) 
 
 You need Go 1.27.1 or newer, a running tunnel daemon, a public hostname pointing at that server, and a loopback web service. The default ACME mode needs public TCP 443 for certificate validation; the daemon normally uses UDP 7443 for QUIC and TCP 443/80 for public traffic.
 
+ACME mode also needs a system CA trust bundle to verify outbound HTTPS requests to the certificate authority. Install `ca-certificates` in minimal Linux containers (or copy the bundle into a `scratch` image). Certificate issuance is on demand; acquisition failures are logged to stderr with the public hostname and underlying error.
+
 Build from the repository root:
 
 ```sh

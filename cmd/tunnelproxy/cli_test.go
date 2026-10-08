@@ -2,9 +2,24 @@ package main
 
 import (
 	"bytes"
+	"crypto/x509"
+	"log"
 	"strings"
 	"testing"
 )
+
+func TestACMEErrorLog(t *testing.T) {
+	var out bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&out)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	logACMEError("app.example.com", x509.UnknownAuthorityError{})
+	for _, want := range []string{"ACME certificate", "app.example.com", "certificate signed by unknown authority"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("ACME log missing %q: %s", want, out.String())
+		}
+	}
+}
 
 func TestCLIHelpAndCompletion(t *testing.T) {
 	for _, args := range [][]string{{"--help"}, {"help", "joinserve"}, {"join", "--help"}, {"serve", "--help"}, {"completion", "bash"}, {"completion", "zsh"}, {"completion", "fish"}, {"completion", "powershell"}} {

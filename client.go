@@ -30,6 +30,7 @@ type dialOptions struct {
 	tls         *tls.Config
 	acme        *acme.Client
 	email       string
+	acmeError   func(string, error)
 }
 
 var ErrIdentityNotApproved = errors.New("identity is not approved for forwarding")

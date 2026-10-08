@@ -37,6 +37,13 @@ func WithACMEEmail(email string) Option {
 	return func(o *dialOptions) error { o.email = email; return nil }
 }
 
+// WithACMEErrorHandler reports certificate acquisition errors that otherwise
+// only fail the incoming TLS handshake. The handler may be called concurrently
+// and should return promptly. A nil handler disables reporting.
+func WithACMEErrorHandler(handler func(host string, err error)) Option {
+	return func(o *dialOptions) error { o.acmeError = handler; return nil }
+}
+
 // ListenTLS terminates public TLS locally with an application-provided config.
 // Accepted connections have completed TLS handshakes. The daemon never sees
 // this configuration or its certificate private keys.
@@ -134,7 +141,11 @@ func (c *Client) acmeGetCertificate(ctx context.Context, get func(*tls.ClientHel
 		if err := c.acmeHostPolicy(ctx, host); err != nil {
 			return nil, err
 		}
-		return get(hello)
+		cert, err := get(hello)
+		if err != nil && c.options.acmeError != nil {
+			c.options.acmeError(host, err)
+		}
+		return cert, err
 	}
 }
 func (c *Client) acmeHostPolicy(ctx context.Context, name string) error {

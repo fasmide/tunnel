@@ -502,6 +502,10 @@ func executeConfig(ctx context.Context, c config, out io.Writer) error {
 	}
 }
 
+func logACMEError(host string, err error) {
+	log.Printf("tunnelproxy: ACME certificate for %s: %v", host, err)
+}
+
 func runServe(ctx, setup context.Context, c config, trust *tls.Config, out io.Writer, storage tunnel.Storage) error {
 	addresses, err := targets(setup, c.target)
 	if err != nil {
@@ -511,7 +515,7 @@ func runServe(ctx, setup context.Context, c config, trust *tls.Config, out io.Wr
 	if err != nil {
 		return fmt.Errorf("load identity (run join or joinserve first): %w", err)
 	}
-	client, err := tunnel.Dial(setup, c.server, tunnel.WithCredentials(creds), tunnel.WithTLSConfig(trust), tunnel.WithACMEEmail(c.email))
+	client, err := tunnel.Dial(setup, c.server, tunnel.WithCredentials(creds), tunnel.WithTLSConfig(trust), tunnel.WithACMEEmail(c.email), tunnel.WithACMEErrorHandler(logACMEError))
 	if err != nil {
 		return fmt.Errorf("dial tunnel server: %w", err)
 	}
@@ -533,7 +537,7 @@ func runJoinServe(ctx context.Context, c config, trust *tls.Config, join tunnel.
 	listen := func(ctx context.Context, client *tunnel.Client) (net.Listener, error) {
 		return listener(ctx, c, client)
 	}
-	l, client, err := tunnel.EnsureJoinedAndListen(ctx, c.server, join, listen, tunnel.WithTLSConfig(trust), tunnel.WithACMEEmail(c.email))
+	l, client, err := tunnel.EnsureJoinedAndListen(ctx, c.server, join, listen, tunnel.WithTLSConfig(trust), tunnel.WithACMEEmail(c.email), tunnel.WithACMEErrorHandler(logACMEError))
 	if err != nil {
 		return fmt.Errorf("ensure joined and listen: %w", err)
 	}

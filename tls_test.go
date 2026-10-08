@@ -187,6 +187,50 @@ func TestACMECacheAndPolicy(t *testing.T) {
 	}
 }
 
+func TestACMECertificateErrorReporting(t *testing.T) {
+	ctx := context.Background()
+	s, m, trust := runningServer(t)
+	creds := identity(t)
+	grant(t, m, creds, "alice.example.com")
+	c := connected(t, s, trust, creds)
+
+	want := x509.UnknownAuthorityError{}
+	var reportedHost string
+	var reportedErr error
+	if err := WithACMEErrorHandler(func(host string, err error) {
+		reportedHost, reportedErr = host, err
+	})(&c.options); err != nil {
+		t.Fatal(err)
+	}
+	get := c.acmeGetCertificate(ctx, func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+		return nil, want
+	})
+	if _, err := get(&tls.ClientHelloInfo{ServerName: "alice.example.com"}); !errors.Is(err, want) {
+		t.Fatalf("certificate error lost: %v", err)
+	}
+	if reportedHost != "alice.example.com" || !errors.Is(reportedErr, want) {
+		t.Fatalf("error not reported: host=%q err=%v", reportedHost, reportedErr)
+	}
+
+	reportedErr = nil
+	cert := &tls.Certificate{}
+	get = c.acmeGetCertificate(ctx, func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+		return cert, nil
+	})
+	if got, err := get(&tls.ClientHelloInfo{ServerName: "alice.example.com"}); got != cert || err != nil || reportedErr != nil {
+		t.Fatalf("successful certificate acquisition: cert=%p err=%v reported=%v", got, err, reportedErr)
+	}
+	if err := WithACMEErrorHandler(nil)(&c.options); err != nil {
+		t.Fatal(err)
+	}
+	get = c.acmeGetCertificate(ctx, func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+		return nil, want
+	})
+	if _, err := get(&tls.ClientHelloInfo{ServerName: "alice.example.com"}); !errors.Is(err, want) {
+		t.Fatalf("nil handler changed certificate error: %v", err)
+	}
+}
+
 // Local RFC8555 test CA. It validates the real TLS-ALPN challenge through the
 // public edge, then signs the CSR. No external network / Let's Encrypt calls.
 func TestACMEIssuanceThroughTunnelAndCachedRestart(t *testing.T) {
