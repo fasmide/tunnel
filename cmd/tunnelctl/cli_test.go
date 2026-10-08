@@ -59,7 +59,7 @@ func TestFingerprintOutput(t *testing.T) {
 }
 
 func TestCLIHelpAndCompletion(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"help", "approve"}, {"routes", "--help"}, {"fingerprint", "--help"}, {"completion", "bash"}, {"completion", "zsh"}, {"completion", "fish"}, {"completion", "powershell"}} {
+	for _, args := range [][]string{{"version"}, {"--help"}, {"help", "approve"}, {"routes", "--help"}, {"fingerprint", "--help"}, {"completion", "bash"}, {"completion", "zsh"}, {"completion", "fish"}, {"completion", "powershell"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			var c config
 			called := false
@@ -74,7 +74,7 @@ func TestCLIHelpAndCompletion(t *testing.T) {
 			if called || !strings.Contains(out.String(), "tunnelctl") {
 				t.Fatalf("called=%v output=%q", called, out.String())
 			}
-			if args[0] != "completion" {
+			if args[0] != "completion" && args[0] != "version" {
 				_, flagHelp, _ := strings.Cut(out.String(), "Flags:")
 				if !strings.Contains(flagHelp, "--json") || strings.Contains(flagHelp, "for routes:") {
 					t.Fatalf("JSON should be global: %s", out.String())

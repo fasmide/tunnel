@@ -22,7 +22,7 @@ func TestACMEErrorLog(t *testing.T) {
 }
 
 func TestCLIHelpAndCompletion(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"help", "joinserve"}, {"join", "--help"}, {"serve", "--help"}, {"completion", "bash"}, {"completion", "zsh"}, {"completion", "fish"}, {"completion", "powershell"}} {
+	for _, args := range [][]string{{"version"}, {"--help"}, {"help", "joinserve"}, {"join", "--help"}, {"serve", "--help"}, {"completion", "bash"}, {"completion", "zsh"}, {"completion", "fish"}, {"completion", "powershell"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			var c config
 			called := false

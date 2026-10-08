@@ -50,6 +50,7 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 	_ = cmd.MarkFlagFilename("cert", "pem", "crt")
 	_ = cmd.MarkFlagFilename("key", "pem", "key")
 	cli.AddCompletion(cmd)
+	cli.AddVersion(cmd)
 	return cmd
 }
 

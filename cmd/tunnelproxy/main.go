@@ -171,6 +171,7 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 	}
 	_ = root.MarkPersistentFlagDirname("state")
 	cli.AddCompletion(root)
+	cli.AddVersion(root)
 	return root
 }
 

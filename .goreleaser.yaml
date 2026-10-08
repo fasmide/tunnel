@@ -1,0 +1,91 @@
+version: 2
+
+project_name: tunnel
+
+builds:
+  - id: tunneld
+    main: ./cmd/tunneld
+    binary: tunneld
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags: &version_ldflags
+      - >-
+        -s -w
+        -X github.com/fasmide/tunnel/internal/cli.Tag={{ .Tag }}
+        -X github.com/fasmide/tunnel/internal/cli.SourceRevision={{ .FullCommit }}
+        -X github.com/fasmide/tunnel/internal/cli.BuildDate={{ .Date }}
+  - id: tunnelctl
+    main: ./cmd/tunnelctl
+    binary: tunnelctl
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags: *version_ldflags
+  - id: tunnelproxy
+    main: ./cmd/tunnelproxy
+    binary: tunnelproxy
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags: *version_ldflags
+
+archives:
+  - id: default
+    # Windows includes only tunnelproxy; the daemon/admin tools are Unix-only.
+    allow_different_binary_count: true
+    ids:
+      - tunneld
+      - tunnelctl
+      - tunnelproxy
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    files:
+      - LICENSE
+      - README.md
+      - cmd/tunneld/README.md
+      - cmd/tunnelctl/README.md
+      - cmd/tunnelproxy/README.md
+      - deploy/systemd/tunneld.service
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^Merge '
+
+release:
+  github:
+    owner: fasmide
+    name: tunnel
+  prerelease: auto

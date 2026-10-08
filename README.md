@@ -78,6 +78,43 @@ HTTP mode is the exception to encrypted public traffic: the browser-to-daemon le
 
 The daemon records the advertised mode but groups `acme`, `private`, `byo`, and `raw` into the same TLS forwarding class; `http` uses a separate HTTP class. The mode changes where certificates and application protocols are handled—not whether the tunnel itself is encrypted.
 
+## Downloads and releases
+
+Download prebuilt archives from [GitHub Releases](https://github.com/fasmide/tunnel/releases). Linux and macOS archives contain `tunneld`, `tunnelctl`, and `tunnelproxy`; Windows archives contain only `tunnelproxy`. All three platforms have amd64 and arm64 builds. Releases include a `checksums.txt` file with SHA-256 checksums.
+
+Binaries are built without cgo. ACME mode still requires a system CA trust bundle; install `ca-certificates` in minimal Linux containers.
+
+Every tool supports `<tool> version` (including the `hello` example). GoReleaser builds report the Git tag, full source revision, and UTC compile date:
+
+```text
+tunnelproxy
+tag: v0.1.0
+srcrev: <full Git commit hash>
+compile date: <RFC3339 UTC timestamp>
+```
+
+Plain `go build` defaults to `dev` / `unknown` / `unknown`. Custom builds can populate `github.com/fasmide/tunnel/internal/cli.Tag`, `.SourceRevision`, and `.BuildDate` using `go build -ldflags` with `-X` assignments.
+
+### Publishing a release
+
+GitHub Actions runs static checks and race-enabled tests on branch pushes and pull requests, and builds downloadable GoReleaser snapshot archives. Pushing a semantic-version tag runs the checks again and publishes a GitHub Release with archives, checksums, and generated release notes:
+
+```sh
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin v0.1.0
+```
+
+Use a tag such as `v0.1.0-rc.1` for a prerelease. No additional token secret is required: the release workflow uses GitHub's built-in `GITHUB_TOKEN` with release-job-only write permission.
+
+To validate or build locally with [GoReleaser v2](https://goreleaser.com/install/):
+
+```sh
+goreleaser check
+goreleaser release --snapshot --clean
+```
+
+Output is written to `dist/`. The `hello` command remains a source example and is not included in release archives.
+
 ## Development
 
 Run `make test` for race-enabled tests or `make vet` for static checks. Tests require curl and OpenSSL 3+ for the [client-certificate interoperability test](https://github.com/fasmide/tunnel/blob/main/cmd/tunnelproxy/README.md#interoperability-test).

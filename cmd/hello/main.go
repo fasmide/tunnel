@@ -146,6 +146,7 @@ func newCommand() *cobra.Command {
 		}
 	}
 	cli.AddCompletion(cmd)
+	cli.AddVersion(cmd)
 	return cmd
 }
 

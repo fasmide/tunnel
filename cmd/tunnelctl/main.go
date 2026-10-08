@@ -78,6 +78,7 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 		root.AddCommand(child)
 	}
 	cli.AddCompletion(root)
+	cli.AddVersion(root)
 	return root
 }
 

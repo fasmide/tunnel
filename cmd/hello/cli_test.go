@@ -7,7 +7,7 @@ import (
 )
 
 func TestCLIHelpAndCompletion(t *testing.T) {
-	for _, args := range [][]string{{"--help"}, {"help"}, {"completion", "bash"}, {"completion", "zsh"}, {"completion", "fish"}, {"completion", "powershell"}} {
+	for _, args := range [][]string{{"version"}, {"--help"}, {"help"}, {"completion", "bash"}, {"completion", "zsh"}, {"completion", "fish"}, {"completion", "powershell"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			cmd := newCommand()
 			var out bytes.Buffer
