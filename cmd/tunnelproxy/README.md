@@ -111,7 +111,7 @@ Repeat `--basicauth` to allow multiple identities:
 
 A request is accepted if its username and password match the same entry. You can mix plaintext, bcrypt, password-only, and generated entries; repeated usernames may have different passwords. Each bare `--basicauth` generates another independent password. A password-only entry accepts any username with that entry's password, even when named entries are also configured. Commas in passwords are literal, not separators. Every entry is validated; a later valid entry does not hide an earlier invalid one. Each configured bcrypt identity adds verification work per request, so use sensible hash costs and list sizes.
 
-Authentication is enforced locally by `tunnelproxy`, not `tunneld`. It applies to every HTTP request, including WebSocket upgrade requests. The proxy removes the accepted `Authorization` header before forwarding, so this feature cannot be combined with an application's own Authorization-based authentication on the same requests. Explicit plaintext passwords are not logged. For generated or plaintext passwords, the proxy prints a ready-to-copy bcrypt flag to reuse the password without configuring it in plaintext; passwords longer than bcrypt's 72-byte limit get a notice instead. Already-hashed credentials are not logged. Command-line values may be visible in process listings or shell history; treat the printed hashes as sensitive too, since they allow offline password guessing.
+Authentication is enforced locally by `tunnelproxy`, not `tunneld`. It applies to every HTTP request, including WebSocket upgrade requests. The proxy removes the accepted `Authorization` header before forwarding, so this feature cannot be combined with an application's own Authorization-based authentication on the same requests. Explicit plaintext passwords are not logged. For generated or plaintext passwords, the proxy prints a ready-to-copy bcrypt flag to reuse the password without configuring it in plaintext; passwords longer than bcrypt's 72-byte limit get a notice instead. Already-hashed credentials are not logged. On Linux, `tunnelproxy` overwrites explicit `--basicauth=`, `--cookieauth=`, and `--bearerauth=` values in its process command line at startup with `<hidden>` (truncated for very short values). Private copies are retained for authentication. This hides values from subsequent `ps` and `/proc/PID/cmdline` reads, but not observers before startup redaction, shell history, execution auditing, or process-memory inspection. Other operating systems do not currently redact the process command line. Treat the printed hashes as sensitive too, since they allow offline password guessing.
 
 All modes accept the flag, with two important caveats:
 
@@ -171,8 +171,9 @@ Use the `=` spelling for supplied values. Tokens are opaque, case-sensitive
 shared secrets, not JWTs; there are no claims, expiry, or signature checks.
 Allowed characters are letters, digits, `-._~+/`, followed by optional `=`
 padding. Whitespace and commas are rejected. Use long randomly generated secrets,
-not passwords or guessable strings. Supplied tokens are never logged, but command
-lines may expose them through shell history and process listings. The prepared
+not passwords or guessable strings. Supplied tokens are never logged. Linux process
+command lines are redacted at startup as described above, but shell history and
+observers before redaction can still expose them. The prepared
 policy stores SHA-256 digests and compares them in constant time; it does not
 provide password stretching or a per-client brute-force rate limiter.
 

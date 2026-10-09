@@ -448,6 +448,7 @@ func readConfirmation(r io.Reader) (bool, error) {
 }
 
 func main() {
+	os.Args = privateProcessArgs(os.Args)
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	exitCode := 0
 	defer func() {
