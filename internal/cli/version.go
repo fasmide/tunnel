@@ -19,7 +19,10 @@ func AddVersion(root *cobra.Command) {
 		Use: "version", Short: "Print build version information", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			_, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\ntag: %s\nsrcrev: %s\ncompile date: %s\n", root.Name(), Tag, SourceRevision, BuildDate)
-			return err
+			if err != nil {
+				return fmt.Errorf("write version information: %w", err)
+			}
+			return nil
 		},
 	})
 }

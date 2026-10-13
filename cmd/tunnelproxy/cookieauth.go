@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"net/url"
@@ -39,7 +40,7 @@ type cookieAuth struct {
 func newCookieAuth(identities basicAuthList, duration time.Duration, secure bool) (*cookieAuth, error) {
 	a := &cookieAuth{identities: identities, duration: duration, secure: secure, now: time.Now, loginSlots: make(chan struct{}, 8)}
 	if _, err := rand.Read(a.key[:]); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("generate cookie authentication key: %w", err)
 	}
 	return a, nil
 }
@@ -124,7 +125,7 @@ func (a *cookieAuth) formToken(w http.ResponseWriter, r *http.Request) (string, 
 	}
 	var nonce [24]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
-		return "", err
+		return "", fmt.Errorf("generate authentication form nonce: %w", err)
 	}
 	csrf := a.sign("csrf", r.Host, "", base64.RawURLEncoding.EncodeToString(nonce[:]), 15*time.Minute)
 	http.SetCookie(w, a.cookie(a.csrfName(), csrf, 15*time.Minute))
@@ -134,7 +135,7 @@ func (a *cookieAuth) formToken(w http.ResponseWriter, r *http.Request) (string, 
 func (a *cookieAuth) showLogin(w http.ResponseWriter, r *http.Request, returnURL, message string, status int) {
 	csrf, err := a.formToken(w, r)
 	if err != nil {
-		http.Error(w, "Unable to prepare sign-in", 500)
+		http.Error(w, "Unable to prepare sign-in", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -177,16 +178,16 @@ func (a *cookieAuth) login(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "GET, POST")
-		http.Error(w, "Method not allowed", 405)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	if r.ParseForm() != nil {
-		http.Error(w, "Invalid sign-in form", 400)
+		http.Error(w, "Invalid sign-in form", http.StatusBadRequest)
 		return
 	}
 	if !a.csrfOK(r) {
-		http.Error(w, "Invalid sign-in request; reload the sign-in page", 403)
+		http.Error(w, "Invalid sign-in request; reload the sign-in page", http.StatusForbidden)
 		return
 	}
 	select {
@@ -194,7 +195,7 @@ func (a *cookieAuth) login(w http.ResponseWriter, r *http.Request) {
 		defer func() { <-a.loginSlots }()
 	default:
 		w.Header().Set("Retry-After", "1")
-		http.Error(w, "Sign-in busy; try again", 429)
+		http.Error(w, "Sign-in busy; try again", http.StatusTooManyRequests)
 		return
 	}
 	user, password := r.PostForm.Get("username"), r.PostForm.Get("password")
@@ -206,12 +207,12 @@ func (a *cookieAuth) login(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !allowed {
-		a.showLogin(w, r, r.PostForm.Get("return"), "Incorrect username or password.", 401)
+		a.showLogin(w, r, r.PostForm.Get("return"), "Incorrect username or password.", http.StatusUnauthorized)
 		return
 	}
 	token := a.sign("session", r.Host, user, "", a.duration)
 	if len(token) > 3800 {
-		http.Error(w, "Invalid sign-in identity", 400)
+		http.Error(w, "Invalid sign-in identity", http.StatusBadRequest)
 		return
 	}
 	http.SetCookie(w, a.cookie(a.cookieName(), token, a.duration))
@@ -224,7 +225,7 @@ func (a *cookieAuth) logout(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		csrf, err := a.formToken(w, r)
 		if err != nil {
-			http.Error(w, "Unable to prepare sign-out", 500)
+			http.Error(w, "Unable to prepare sign-out", http.StatusInternalServerError)
 			return
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -233,16 +234,16 @@ func (a *cookieAuth) logout(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "GET, POST")
-		http.Error(w, "Method not allowed", 405)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	if r.ParseForm() != nil {
-		http.Error(w, "Invalid logout form", 400)
+		http.Error(w, "Invalid logout form", http.StatusBadRequest)
 		return
 	}
 	if !a.csrfOK(r) {
-		http.Error(w, "Invalid logout request", 403)
+		http.Error(w, "Invalid logout request", http.StatusForbidden)
 		return
 	}
 	a.clearCookie(w, a.cookieName())

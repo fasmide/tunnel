@@ -27,7 +27,8 @@ func validBearerToken(token string) bool {
 			padding = true
 			continue
 		}
-		if padding || !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("-._~+/", c)) {
+		validCharacter := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("-._~+/", c)
+		if padding || !validCharacter {
 			return false
 		}
 		characters++
@@ -44,7 +45,7 @@ func prepareBearerAuth(c config, out io.Writer) (bearerAuthList, error) {
 	}
 	if c.mode == "http" {
 		if _, err := fmt.Fprintln(out, "WARNING: Bearer authentication over plain HTTP exposes tokens between the caller and public server; the encrypted QUIC tunnel does not protect that leg."); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("write HTTP bearer authentication warning: %w", err)
 		}
 	}
 	tokens := c.bearerAuth

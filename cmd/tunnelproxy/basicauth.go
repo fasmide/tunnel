@@ -33,7 +33,8 @@ func parseBasicAuth(value string) (*basicAuth, error) {
 			return nil, errors.New("authentication contains an invalid bcrypt hash")
 		}
 		// Cost alone only parses the header. Validate the full encoded hash too.
-		if len(password) != 60 || !(strings.HasPrefix(password, "$2a$") || strings.HasPrefix(password, "$2b$") || strings.HasPrefix(password, "$2y$")) {
+		validPrefix := strings.HasPrefix(password, "$2a$") || strings.HasPrefix(password, "$2b$") || strings.HasPrefix(password, "$2y$")
+		if len(password) != 60 || !validPrefix {
 			return nil, errors.New("authentication requires a complete $2a$, $2b$ or $2y$ bcrypt hash")
 		}
 		for _, c := range password[7:] {
@@ -61,11 +62,14 @@ func prepareBasicAuth(c config, out io.Writer) (basicAuthList, error) {
 	}
 	if c.mode == "raw" {
 		_, err := fmt.Fprintf(out, "WARNING: --%s is NOT enforced in raw mode: TLS passes through unchanged. Configure authentication on the target service.\n", flag)
-		return nil, err
+		if err != nil {
+			return nil, fmt.Errorf("write raw-mode authentication warning: %w", err)
+		}
+		return nil, nil
 	}
 	if c.mode == "http" {
 		if _, err := fmt.Fprintln(out, "WARNING: Authentication over plain HTTP exposes passwords and session cookies between the browser and public server; the encrypted QUIC tunnel does not protect that leg."); err != nil {
-			return nil, err
+			return nil, fmt.Errorf("write HTTP authentication warning: %w", err)
 		}
 	}
 	if len(identities) == 0 {
@@ -113,6 +117,8 @@ func prepareAuthIdentity(value, flag, label string, out io.Writer) (*basicAuth, 
 
 // Shell-quote the entire value: bcrypt contains dollar signs, and usernames
 // may contain quotes. Never include the plaintext password in this hint.
+//
+//nolint:unused // Used by tests, which are excluded from linting.
 func printBcryptHint(out io.Writer, username, password string) error {
 	return printAuthBcryptHint(out, "basicauth", username, password)
 }
@@ -120,7 +126,10 @@ func printBcryptHint(out io.Writer, username, password string) error {
 func printAuthBcryptHint(out io.Writer, flag, username, password string) error {
 	if len(password) > 72 {
 		_, err := fmt.Fprintln(out, "TIP: bcrypt supports passwords up to 72 bytes; no bcrypt alternative was generated for this longer password.")
-		return err
+		if err != nil {
+			return fmt.Errorf("write bcrypt length notice: %w", err)
+		}
+		return nil
 	}
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 	if err != nil {
@@ -137,7 +146,7 @@ func (a *basicAuth) matches(username, password string) bool {
 	userDigest := sha256.Sum256([]byte(username))
 	expectedUser := sha256.Sum256([]byte(a.username))
 	userOK := subtle.ConstantTimeCompare(userDigest[:], expectedUser[:]) == 1 || a.anyUser
-	passwordOK := false
+	var passwordOK bool
 	if a.hash != nil {
 		passwordOK = bcrypt.CompareHashAndPassword(a.hash, []byte(password)) == nil
 	} else {
@@ -147,6 +156,7 @@ func (a *basicAuth) matches(username, password string) bool {
 	return userOK && passwordOK
 }
 
+//nolint:unused // Used by tests, which are excluded from linting.
 func (a *basicAuth) wrap(next http.Handler) http.Handler {
 	return basicAuthList{a}.wrap(next)
 }

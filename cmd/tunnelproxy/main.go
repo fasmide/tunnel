@@ -585,6 +585,8 @@ func servingListener(ctx, setup context.Context, c config, trust *tls.Config, jo
 }
 
 // serveClient owns the client and listener once either setup path succeeds.
+//
+//nolint:unused // Used by tests, which are excluded from linting.
 func serveClient(ctx context.Context, c config, client *tunnel.Client, l net.Listener, addresses []string, out io.Writer) error {
 	return serveClientWithHandler(ctx, c, client, l, addresses, nil, out)
 }

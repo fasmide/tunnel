@@ -20,9 +20,9 @@ import (
 func newFileHandler(directory string, browse, revealSymlinks bool) (http.Handler, func() error, error) {
 	root, err := os.OpenRoot(directory)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("open file-serving root: %w", err)
 	}
-	var filesystem http.FileSystem = http.FS(root.FS())
+	filesystem := http.FS(root.FS())
 	if !browse {
 		filesystem = noListingFS{filesystem}
 	}
@@ -102,7 +102,7 @@ type noListingFS struct{ http.FileSystem }
 func (f noListingFS) Open(name string) (http.File, error) {
 	file, err := f.FileSystem.Open(name)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open file without directory listing: %w", err)
 	}
 	return noListingFile{file}, nil
 }
@@ -136,7 +136,10 @@ func (w *accessResponse) Write(p []byte) (int, error) {
 	}
 	n, err := w.ResponseWriter.Write(p)
 	w.bytes += int64(n)
-	return n, err
+	if err != nil {
+		return n, fmt.Errorf("write access-logged response: %w", err)
+	}
+	return n, nil
 }
 
 func accessLogged(next http.Handler, out io.Writer) http.Handler {

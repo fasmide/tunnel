@@ -28,7 +28,7 @@ func parseClientCertFingerprint(value string) ([sha256.Size]byte, error) {
 
 func prepareClientCertAuth(c config) (*tunnel.ClientAuthConfig, error) {
 	if len(c.clientCertAuth) == 0 && c.clientCertAuthCA == "" {
-		return nil, nil
+		return nil, nil //nolint:nilnil // A nil configuration disables optional client authentication.
 	}
 	if c.mode == "raw" || c.mode == "http" {
 		return nil, errors.New("client certificate authentication requires a TLS-terminating mode")
@@ -92,7 +92,10 @@ func prepareClientCertAuth(c config) (*tunnel.ClientAuthConfig, error) {
 			roots := x509.NewCertPool()
 			roots.AddCert(leaf)
 			_, err := leaf.Verify(x509.VerifyOptions{Roots: roots, CurrentTime: time.Now(), KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth}})
-			return err
+			if err != nil {
+				return fmt.Errorf("verify pinned client certificate: %w", err)
+			}
+			return nil
 		},
 	}, nil
 }
