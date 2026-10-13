@@ -54,8 +54,12 @@ func certPin(cert *x509.Certificate) string {
 
 func TestClientCertAuthCLI(t *testing.T) {
 	pin := strings.Repeat("ab", 32)
-	for _, command := range []string{"serve", "joinserve"} {
+	for _, join := range []bool{false, true} {
+		command := "serve"
 		base := []string{command, "-s", "tunnel.example.com", "-n", "app.example.com", "-t", "127.0.0.1:8080"}
+		if join {
+			base = append(base, "--join")
+		}
 		c, err := parse(append(append([]string{}, base...), "--clientcertauth="+pin, "--clientcertauth="+strings.ToUpper(pin)))
 		if err != nil || len(c.clientCertAuth) != 2 {
 			t.Fatalf("pins %+v %v", c, err)

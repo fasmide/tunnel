@@ -448,28 +448,47 @@ func TestJoinServeModesAndSignalDrain(t *testing.T) {
 		})
 	}
 }
-func TestJoinServeWaitsForApproval(t *testing.T) {
-	a, err := transportpki.Open(tunnel.MemoryStorage(), "example.com", time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := server.NewManager()
-	s, err := server.ListenWithAuthority("127.0.0.1:0", a.Config(), m, a)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Close() }()
-	ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
-	defer cancel()
-	var out bytes.Buffer
-	err = run(ctx, []string{"joinserve", "-s", s.Addr(), "--server-name", "tunnel.example.com", "-n", "app.example.com", "--state", t.TempDir(), "-t", "127.0.0.1:80", "-f", a.Fingerprint()}, &out)
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("got %v", err)
-	}
-	if len(m.Invites()) != 1 {
-		t.Fatalf("invites %d", len(m.Invites()))
-	}
-	if !strings.Contains(out.String(), "join request submitted") {
-		t.Fatal(out.String())
+func TestServingJoinWaitsForApproval(t *testing.T) {
+	for _, command := range []string{"serve", "file-serve"} {
+		t.Run(command, func(t *testing.T) {
+			a, err := transportpki.Open(tunnel.MemoryStorage(), "example.com", time.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := server.NewManager()
+			s, err := server.ListenWithAuthority("127.0.0.1:0", a.Config(), m, a)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = s.Close() }()
+			state := t.TempDir()
+			args := []string{command, "-s", s.Addr(), "--server-name", "tunnel.example.com", "-n", "app.example.com", "--state", state, "-f", a.Fingerprint()}
+			if command == "serve" {
+				args = append(args, "-t", "127.0.0.1:80")
+			} else {
+				args = append(args, "--root", t.TempDir())
+			}
+			var out bytes.Buffer
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			// Default serving must not enroll a missing identity.
+			err = run(ctx, args, &out)
+			if err == nil || !strings.Contains(err.Error(), "add --join") || len(m.Invites()) != 0 {
+				t.Fatalf("default serving: err=%v invites=%d", err, len(m.Invites()))
+			}
+			waiting, stop := context.WithTimeout(ctx, 300*time.Millisecond)
+			defer stop()
+			out.Reset()
+			err = run(waiting, append(args, "--join"), &out)
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("got %v", err)
+			}
+			if len(m.Invites()) != 1 {
+				t.Fatalf("invites %d", len(m.Invites()))
+			}
+			if !strings.Contains(out.String(), "join request submitted") {
+				t.Fatal(out.String())
+			}
+		})
 	}
 }

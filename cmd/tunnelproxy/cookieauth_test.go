@@ -55,8 +55,12 @@ func cookieFormRequest(a *cookieAuth, path, user, password, returnURL string) *h
 	return r
 }
 func TestCookieAuthCLI(t *testing.T) {
-	for _, command := range []string{"serve", "joinserve"} {
+	for _, join := range []bool{false, true} {
+		command := "serve"
 		base := []string{command, "-s", "tunnel.example.com", "-n", "app.example.com", "-t", "127.0.0.1:8080"}
+		if join {
+			base = append(base, "--join")
+		}
 		c, err := parse(append(append([]string{}, base...), "--cookieauth", "--cookieauth=alice:secret", "--cookieauth=:shared", "--cookieauth-duration=12h"))
 		if err != nil || !c.cookieAuthEnabled || len(c.cookieAuth) != 3 || c.cookieAuth[0] != "" || c.cookieAuthDuration != 12*time.Hour {
 			t.Fatalf("config %+v %v", c, err)

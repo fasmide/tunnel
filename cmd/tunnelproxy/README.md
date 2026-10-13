@@ -23,7 +23,7 @@ The examples below use `tunnel.example.net` for the daemon, `app.tunnel.example.
 Get the daemon CA's SHA-256 fingerprint from the server administrator through a trusted channel. On the application machine, with the local service running:
 
 ```sh
-./bin/tunnelproxy joinserve \
+./bin/tunnelproxy serve --join \
   --server tunnel.example.net \
   --name app.tunnel.example.net \
   --target 127.0.0.1:8080 \
@@ -35,6 +35,14 @@ The client saves its credentials and trusted daemon CA, submits the hostname req
 Once approved, open **https://app.tunnel.example.net/**. The default mode obtains and caches Let's Encrypt certificates on the application machine and accepts the CA's terms of service. The first HTTPS request may take longer while a certificate is issued. Public HTTPS keys remain on this machine; daemon trust is separate from browser HTTPS trust.
 
 Feeling lucky? On first contact in an interactive terminal, you can omit `--fingerprint`: the proxy displays the daemon's fingerprint and asks `Trust this fingerprint? [y/N]`. Answer `yes` to save it and continue. Without checking that fingerprint through a separate trusted channel, you are trusting whoever answers the first connection; an attacker could impersonate the daemon. For noninteractive first-contact use, supply `--fingerprint` or explicitly opt into this risk with `--tofu`.
+
+`--join` is available on every serving command. Without it, serving requires
+an existing approved identity and does not submit an access request or wait for
+approval. The standalone `join` command still submits a request and exits.
+
+**Breaking change:** replace `tunnelproxy joinserve ...` with
+`tunnelproxy serve --join ...`. File serving no longer joins implicitly; use
+`tunnelproxy file-serve --join ...` when enrollment or approval waiting is needed.
 
 ### Serve again or request access separately
 
@@ -61,18 +69,19 @@ Keep the private state directory persistent. Use `--state` to select it; by defa
 ## Serve files directly
 
 `file-serve` serves a directory through the tunnel without a local backend or
-listening port. Like `joinserve`, it uses the saved identity when available and
-requests access and waits for approval when needed:
+listening port. By default, it requires an existing approved identity. Add
+`--join` to use the saved identity when available, request access if needed,
+and wait for approval:
 
 ```sh
-./bin/tunnelproxy file-serve \
+./bin/tunnelproxy file-serve --join \
   --server tunnel.example.net \
   --name files.tunnel.example.net \
   --fingerprint YOUR_DAEMON_CA_SHA256 \
   --root ./public
 
 # Enable directory browsing, request logging, and browser sign-in:
-./bin/tunnelproxy file-serve \
+./bin/tunnelproxy file-serve --join \
   --server tunnel.example.net \
   --name files.tunnel.example.net \
   --root ./public --browse --access-log --cookieauth
@@ -128,13 +137,13 @@ Keep state directories private and persistent.
 
 Authentication is optional. For a public-facing site, leave the authentication flags out: visitors can reach your local service without signing in to the proxy.
 
-To restrict visitors, choose one method for `serve` or `joinserve`: Basic, cookie, Bearer tokens, certificate fingerprints, or client CA trust. These methods are mutually exclusive. For Basic, cookie, and Bearer authentication, a bare flag or an empty value generates a secret; repeat the flag to generate more. Supplied values use the `--flag=value` spelling.
+To restrict visitors, choose one method for `serve` or `file-serve`: Basic, cookie, Bearer tokens, certificate fingerprints, or client CA trust. These methods are mutually exclusive. For Basic, cookie, and Bearer authentication, a bare flag or an empty value generates a secret; repeat the flag to generate more. Supplied values use the `--flag=value` spelling.
 
 Daemon approval allows **your tunnel client** to publish a hostname; proxy authentication controls **who can visit** that hostname. Your application can still manage its own accounts and permissions—for example, which signed-in users may edit content.
 
 ### Share a development site with Basic authentication
 
-Add `--basicauth` to `tunnelproxy serve` or `joinserve` to require a password before requests reach your local web service:
+Add `--basicauth` to `tunnelproxy serve` or `file-serve` to require a password before requests reach your local web service:
 
 ```sh
 ./bin/tunnelproxy serve \
@@ -151,7 +160,7 @@ For credentials that survive restarts, use `--basicauth='user:password'`. To avo
 Repeat `--basicauth` to allow multiple identities:
 
 ```sh
-# Add these flags to serve or joinserve:
+# Add these flags to serve or file-serve:
 --basicauth='alice:alice-password' --basicauth='bob:bob-password'
 ```
 
@@ -188,7 +197,7 @@ Login and logout use CSRF tokens and same-origin checks. Forms have bounded size
 
 ### API access with Bearer tokens
 
-Add `--bearerauth` to `serve` or `joinserve` to generate a random token:
+Add `--bearerauth` to `serve` or `file-serve` to generate a random token:
 
 ```sh
 ./bin/tunnelproxy serve \
@@ -207,7 +216,7 @@ channel.
 Supply tokens explicitly to keep them across restarts or allow multiple callers:
 
 ```sh
-# Add these flags to serve or joinserve (replace the example values):
+# Add these flags to serve or file-serve (replace the example values):
 --bearerauth=FIRST_SECRET_TOKEN --bearerauth=SECOND_SECRET_TOKEN
 
 curl -H "Authorization: Bearer $TOKEN" https://app.tunnel.example.net/
@@ -278,7 +287,7 @@ sha256 Fingerprint=AA:BB:…
 
 Copy the **complete value after `=`**, not the label or the abbreviated example above. Share that fingerprint with the proxy operator through a trusted channel. Neither the private key nor the certificate file needs to leave the client's machine.
 
-On the machine running the target service, add the fingerprint to your usual `serve` or `joinserve` command:
+On the machine running the target service, add the fingerprint to your usual `serve` or `file-serve` command:
 
 ```sh
 ./bin/tunnelproxy serve \
@@ -397,7 +406,7 @@ CA trust and fingerprint enrollment are alternative policies; they cannot be com
 
 ## Modes, security, and limitations
 
-- Client-certificate authentication is available on `serve` and `joinserve` in **acme**, **private**, and **byo** modes.
+- Client-certificate authentication is available on `serve` and `file-serve` in **acme**, **private**, and **byo** modes.
 - **http** and **raw** reject it rather than silently exposing an unprotected service. In raw mode, configure client authentication on the target TLS service instead.
 - `--clientcertauth`, `--clientcertauth-ca`, `--basicauth`, `--cookieauth`, and `--bearerauth` are mutually exclusive.
 - Authentication happens locally before HTTP, including HTTP/2 and WebSocket upgrades. Failures produce TLS errors, not a sign-in page.
@@ -421,7 +430,7 @@ It also runs normally under `go test ./...`.
 ```sh
 ./bin/tunnelproxy --help
 ./bin/tunnelproxy serve --help
-./bin/tunnelproxy joinserve --help
+./bin/tunnelproxy file-serve --help
 ```
 
 For Bash with bash-completion installed, enable completion in the current shell:

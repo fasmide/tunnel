@@ -15,8 +15,12 @@ func TestBasicAuthCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, command := range []string{"serve", "joinserve"} {
+	for _, join := range []bool{false, true} {
+		command := "serve"
 		base := []string{command, "-s", "tunnel.example.com", "-n", "app.example.com", "-t", "127.0.0.1:8080"}
+		if join {
+			base = append(base, "--join")
+		}
 		for _, mode := range []string{"acme", "private", "http", "raw", "byo"} {
 			args := append(append([]string{}, base...), "--mode", mode)
 			if mode == "byo" {

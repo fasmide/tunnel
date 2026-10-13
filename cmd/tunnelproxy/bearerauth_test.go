@@ -15,8 +15,12 @@ import (
 )
 
 func TestBearerAuthCLI(t *testing.T) {
-	for _, command := range []string{"serve", "joinserve"} {
+	for _, join := range []bool{false, true} {
+		command := "serve"
 		base := []string{command, "-s", "tunnel.example.com", "-n", "app.example.com", "-t", "127.0.0.1:8080"}
+		if join {
+			base = append(base, "--join")
+		}
 		c, err := parse(append(append([]string{}, base...), "--bearerauth", "--bearerauth=", "--bearerauth=generate", "--bearerauth=other"))
 		if err != nil {
 			t.Fatal(err)

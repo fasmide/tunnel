@@ -22,7 +22,7 @@ func TestACMEErrorLog(t *testing.T) {
 }
 
 func TestCLIHelpAndCompletion(t *testing.T) {
-	for _, args := range [][]string{{"version"}, {"--help"}, {"help", "joinserve"}, {"join", "--help"}, {"serve", "--help"}, {"completion", "bash"}, {"completion", "zsh"}, {"completion", "fish"}, {"completion", "powershell"}} {
+	for _, args := range [][]string{{"version"}, {"--help"}, {"help", "file-serve"}, {"join", "--help"}, {"serve", "--help"}, {"completion", "bash"}, {"completion", "zsh"}, {"completion", "fish"}, {"completion", "powershell"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			var c config
 			called := false
@@ -45,7 +45,7 @@ func TestCLIHelpAndCompletion(t *testing.T) {
 }
 
 func TestCLIAuthenticationHelp(t *testing.T) {
-	for _, name := range []string{"serve", "joinserve"} {
+	for _, name := range []string{"serve", "file-serve"} {
 		t.Run(name, func(t *testing.T) {
 			var c config
 			cmd := newCommand(&c, func(config) error { t.Fatal("help ran application"); return nil })
@@ -83,10 +83,14 @@ func TestCLIAuthenticationHelp(t *testing.T) {
 }
 
 func TestCLIAuthenticationGeneration(t *testing.T) {
-	for _, command := range []string{"serve", "joinserve"} {
+	for _, command := range []string{"serve", "file-serve"} {
 		for _, flag := range []string{"basicauth", "cookieauth", "bearerauth"} {
 			t.Run(command+"/"+flag, func(t *testing.T) {
-				c, err := parse([]string{command, "--server=tunnel.example.net", "--name=app.tunnel.example.net", "--target=127.0.0.1:8080", "--" + flag, "--" + flag + "="})
+				args := []string{command, "--server=tunnel.example.net", "--name=app.tunnel.example.net", "--" + flag, "--" + flag + "="}
+				if command == "serve" {
+					args = append(args, "--target=127.0.0.1:8080")
+				}
+				c, err := parse(args)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -95,6 +99,32 @@ func TestCLIAuthenticationGeneration(t *testing.T) {
 					t.Fatalf("bare and empty flags did not request generation: %q", values)
 				}
 			})
+		}
+	}
+}
+
+func TestCLIJoinFlag(t *testing.T) {
+	for _, command := range []string{"serve", "file-serve"} {
+		for _, join := range []bool{false, true} {
+			args := []string{command, "--server=tunnel.example.net", "--name=app.example.net"}
+			if command == "serve" {
+				args = append(args, "--target=127.0.0.1:8080")
+			}
+			if join {
+				args = append(args, "--join")
+			}
+			c, err := parse(args)
+			if err != nil || c.join != join || c.command != command {
+				t.Fatalf("%v: %+v %v", args, c, err)
+			}
+		}
+	}
+	for _, args := range [][]string{
+		{"joinserve", "--server=tunnel.example.net", "--name=app.example.net", "--target=127.0.0.1:8080"},
+		{"join", "--server=tunnel.example.net", "--name=app.example.net", "--join"},
+	} {
+		if _, err := parse(args); err == nil {
+			t.Fatalf("accepted %v", args)
 		}
 	}
 }

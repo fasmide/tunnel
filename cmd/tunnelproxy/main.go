@@ -28,7 +28,7 @@ import (
 
 type config struct {
 	command, server, name, state, target, mode, cert, key, serverName, fingerprint, email string
-	tofu                                                                                  bool
+	tofu, join                                                                            bool
 	basicAuth                                                                             []string
 	basicAuthEnabled                                                                      bool
 	cookieAuth                                                                            []string
@@ -81,8 +81,7 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 	for _, spec := range []struct{ name, short string }{
 		{"join", "Submit an access request and exit"},
 		{"serve", "Serve using an existing approved identity"},
-		{"joinserve", "Request access, wait for approval, then serve"},
-		{"file-serve", "Serve files through the tunnel (join if needed)"},
+		{"file-serve", "Serve files through the tunnel using an approved identity"},
 	} {
 		child := &cobra.Command{Use: spec.name, Short: spec.short, Args: cobra.NoArgs,
 			Example: "  tunnelproxy " + spec.name + " --server tunnel.example.net --name app.tunnel.example.net --fingerprint SHA256"}
@@ -114,6 +113,7 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
   # Supply public HTTPS files, separate from daemon transport TLS:
   --mode byo --cert=server.crt --key=server.key`
 			serving := child.Flags()
+			serving.BoolVar(&c.join, "join", false, "request access if needed and wait for approval before serving")
 			serving.StringArrayVar(&c.basicAuth, "basicauth", nil, "allow a Basic auth identity (repeatable)")
 			serving.StringArrayVar(&c.cookieAuth, "cookieauth", nil, "allow a sign-in identity (repeatable)")
 			serving.StringArrayVar(&c.bearerAuth, "bearerauth", nil, "allow a Bearer token (repeatable)")
@@ -201,7 +201,7 @@ func parse(args []string) (config, error) {
 	cmd.SetArgs(args)
 	err := cmd.Execute()
 	if err == nil && !called {
-		err = errors.New("usage: tunnelproxy join|serve|joinserve [flags]")
+		err = errors.New("usage: tunnelproxy join|serve|file-serve [flags]")
 	}
 	return c, err
 }
@@ -271,7 +271,7 @@ func validateConfig(c config) (config, error) {
 	}
 	if c.command == "join" {
 		if c.target != "" || c.cert != "" || c.key != "" || c.mode != "acme" || c.email != "" || c.basicAuthEnabled || c.cookieAuthEnabled || c.bearerAuthEnabled {
-			return c, errors.New("forwarding options require serve or joinserve")
+			return c, errors.New("serving options require serve or file-serve")
 		}
 	} else {
 		if c.command == "file-serve" {
@@ -518,10 +518,8 @@ func executeConfig(ctx context.Context, c config, out io.Writer) error {
 			return fmt.Errorf("write join result: %w", err)
 		}
 		return nil
-	case "serve":
-		return runServe(ctx, setup, c, trust, out, storage)
-	case "joinserve", "file-serve":
-		return runJoinServe(ctx, c, trust, join, out)
+	case "serve", "file-serve":
+		return runServing(ctx, setup, c, trust, join, out, storage)
 	default:
 		return fmt.Errorf("unknown command %s", c.command)
 	}
@@ -531,30 +529,7 @@ func logACMEError(host string, err error) {
 	log.Printf("tunnelproxy: ACME certificate for %s: %v", host, err)
 }
 
-func runServe(ctx, setup context.Context, c config, trust *tls.Config, out io.Writer, storage tunnel.Storage) error {
-	addresses, err := targets(setup, c.target)
-	if err != nil {
-		return fmt.Errorf("-target: %w", err)
-	}
-	creds, err := tunnel.LoadCredentials(storage)
-	if err != nil {
-		return fmt.Errorf("load identity (run join or joinserve first): %w", err)
-	}
-	client, err := tunnel.Dial(setup, c.server, tunnel.WithCredentials(creds), tunnel.WithTLSConfig(trust), tunnel.WithACMEEmail(c.email), tunnel.WithACMEErrorHandler(logACMEError))
-	if err != nil {
-		return fmt.Errorf("dial tunnel server: %w", err)
-	}
-	l, err := listener(setup, c, client)
-	if err != nil {
-		_ = client.Close()
-		return fmt.Errorf("create listener: %w", err)
-	}
-	return serveClient(ctx, c, client, l, addresses, out)
-}
-
-func runJoinServe(ctx context.Context, c config, trust *tls.Config, join tunnel.JoinWaitOptions, out io.Writer) error {
-	setup, cancel := context.WithTimeout(ctx, c.setupTimeout)
-	defer cancel()
+func runServing(ctx, setup context.Context, c config, trust *tls.Config, join tunnel.JoinWaitOptions, out io.Writer, storage tunnel.Storage) error {
 	var addresses []string
 	var files http.Handler
 	var err error
@@ -571,14 +546,42 @@ func runJoinServe(ctx context.Context, c config, trust *tls.Config, join tunnel.
 			return fmt.Errorf("-target: %w", err)
 		}
 	}
-	listen := func(ctx context.Context, client *tunnel.Client) (net.Listener, error) {
-		return listener(ctx, c, client)
-	}
-	l, client, err := tunnel.EnsureJoinedAndListen(ctx, c.server, join, listen, tunnel.WithTLSConfig(trust), tunnel.WithACMEEmail(c.email), tunnel.WithACMEErrorHandler(logACMEError))
+	l, client, err := servingListener(ctx, setup, c, trust, join, storage)
 	if err != nil {
-		return fmt.Errorf("ensure joined and listen: %w", err)
+		return err
 	}
 	return serveClientWithHandler(ctx, c, client, l, addresses, files, out)
+}
+
+// Joining is independent of the serving handler: every serving command uses
+// the same opt-in enrollment and listener setup.
+func servingListener(ctx, setup context.Context, c config, trust *tls.Config, join tunnel.JoinWaitOptions, storage tunnel.Storage) (net.Listener, *tunnel.Client, error) {
+	options := []tunnel.Option{tunnel.WithTLSConfig(trust), tunnel.WithACMEEmail(c.email), tunnel.WithACMEErrorHandler(logACMEError)}
+	if c.join {
+		listen := func(ctx context.Context, client *tunnel.Client) (net.Listener, error) {
+			return listener(ctx, c, client)
+		}
+		l, client, err := tunnel.EnsureJoinedAndListen(ctx, c.server, join, listen, options...)
+		if err != nil {
+			return nil, nil, fmt.Errorf("ensure joined and listen: %w", err)
+		}
+		return l, client, nil
+	}
+	creds, err := tunnel.LoadCredentials(storage)
+	if err != nil {
+		return nil, nil, fmt.Errorf("load identity (run join first or add --join): %w", err)
+	}
+	options = append(options, tunnel.WithCredentials(creds))
+	client, err := tunnel.Dial(setup, c.server, options...)
+	if err != nil {
+		return nil, nil, fmt.Errorf("dial tunnel server: %w", err)
+	}
+	l, err := listener(setup, c, client)
+	if err != nil {
+		_ = client.Close()
+		return nil, nil, fmt.Errorf("create listener: %w", err)
+	}
+	return l, client, nil
 }
 
 // serveClient owns the client and listener once either setup path succeeds.
