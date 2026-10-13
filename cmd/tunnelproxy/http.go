@@ -106,13 +106,23 @@ func (l oneShotListener) Accept() (net.Conn, error) {
 
 func forwardHTTP(ctx context.Context, client *tunnel.Client, l net.Listener, addresses []string, dialTimeout, drainTimeout time.Duration, plain bool, auth basicAuthList, cookies *cookieAuth, bearers bearerAuthList, out io.Writer) error {
 	proxy, transport := newHTTPProxy(addresses, dialTimeout)
-	var handler http.Handler
 	if cookies != nil {
 		proxy.ModifyResponse = func(r *http.Response) error { cookies.filterResponse(r); return nil }
-		handler = cookies.wrap(proxy)
-	} else {
-		handler = bearers.wrap(auth.wrap(proxy))
 	}
+	defer transport.CloseIdleConnections()
+	return serveHTTP(ctx, client, l, authenticatedHandler(proxy, auth, cookies, bearers), drainTimeout, plain, out)
+}
+
+func authenticatedHandler(next http.Handler, auth basicAuthList, cookies *cookieAuth, bearers bearerAuthList) http.Handler {
+	if cookies != nil {
+		return cookies.wrap(next)
+	}
+	return bearers.wrap(auth.wrap(next))
+}
+
+// serveHTTP shares tunnel lifecycle, HTTP protocol settings and drain behavior
+// between reverse proxying and direct file serving.
+func serveHTTP(ctx context.Context, client *tunnel.Client, l net.Listener, handler http.Handler, drainTimeout time.Duration, plain bool, out io.Writer) error {
 	if plain {
 		l = oneShotListener{l}
 		next := handler
@@ -127,7 +137,6 @@ func forwardHTTP(ctx context.Context, client *tunnel.Client, l net.Listener, add
 			}
 		})
 	}
-	defer transport.CloseIdleConnections()
 	// Server.Close/Shutdown do not manage hijacked WebSocket connections. Keep
 	// them tracked until final cleanup; tunnel drain itself accounts for them.
 	var mu sync.Mutex

@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -35,6 +36,8 @@ type config struct {
 	cookieAuthDuration                                                                    time.Duration
 	bearerAuth                                                                            []string
 	bearerAuthEnabled                                                                     bool
+	root                                                                                  string
+	browse, accessLog, revealSymlinks                                                     bool
 	clientCertAuth                                                                        []string
 	clientCertAuthCA                                                                      string
 	setupTimeout, drainTimeout, dialTimeout                                               time.Duration
@@ -79,11 +82,16 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 		{"join", "Submit an access request and exit"},
 		{"serve", "Serve using an existing approved identity"},
 		{"joinserve", "Request access, wait for approval, then serve"},
+		{"file-serve", "Serve files through the tunnel (join if needed)"},
 	} {
 		child := &cobra.Command{Use: spec.name, Short: spec.short, Args: cobra.NoArgs,
 			Example: "  tunnelproxy " + spec.name + " --server tunnel.example.net --name app.tunnel.example.net --fingerprint SHA256"}
 		if spec.name != "join" {
-			child.Example += " --target 127.0.0.1:8080"
+			if spec.name == "file-serve" {
+				child.Example += " --root ./public --browse"
+			} else {
+				child.Example += " --target 127.0.0.1:8080"
+			}
 			child.Example += `
 
   # Add one authentication method to the command above (repeat for more identities):
@@ -123,15 +131,23 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 				return nil, cobra.ShellCompDirectiveNoFileComp
 			})
 			child.MarkFlagsMutuallyExclusive("basicauth", "cookieauth", "bearerauth", "clientcertauth", "clientcertauth-ca")
-			serving.StringVarP(&c.target, "target", "t", "", "loopback TCP service, e.g. 127.0.0.1:8080")
+			if spec.name == "file-serve" {
+				serving.StringVar(&c.root, "root", ".", "directory to serve (default: current directory)")
+				serving.BoolVar(&c.browse, "browse", false, "enable directory listings when no index file exists")
+				serving.BoolVar(&c.accessLog, "access-log", false, "log HTTP requests to standard output")
+				serving.BoolVar(&c.revealSymlinks, "reveal-symlinks", false, "show symlink paths when browse is enabled")
+				_ = child.MarkFlagDirname("root")
+			} else {
+				serving.StringVarP(&c.target, "target", "t", "", "loopback TCP service, e.g. 127.0.0.1:8080")
+				_ = child.MarkFlagRequired("target")
+				serving.DurationVar(&c.dialTimeout, "target-timeout", 10*time.Second, "local TCP dial deadline")
+			}
 			serving.StringVarP(&c.mode, "mode", "m", "acme", "public mode: acme, private, byo, raw, http")
 			serving.StringVar(&c.cert, "cert", "", "public HTTPS certificate (PEM; byo mode)")
 			serving.StringVar(&c.key, "key", "", "public HTTPS private key (PEM; byo mode)")
 			serving.StringVar(&c.email, "acme-email", "", "ACME contact email (acme mode)")
 			serving.DurationVar(&c.drainTimeout, "drain-timeout", 30*time.Second, "SIGINT/SIGTERM drain deadline")
-			serving.DurationVar(&c.dialTimeout, "target-timeout", 10*time.Second, "local TCP dial deadline")
 			child.MarkFlagsRequiredTogether("cert", "key")
-			_ = child.MarkFlagRequired("target")
 			_ = child.MarkFlagFilename("cert", "pem", "crt")
 			_ = child.MarkFlagFilename("key", "pem", "key")
 			_ = child.RegisterFlagCompletionFunc("mode", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
@@ -223,7 +239,7 @@ func validateConfig(c config) (config, error) {
 	}
 	if len(c.clientCertAuth) > 0 || c.clientCertAuthCA != "" {
 		if c.command == "join" || c.mode == "http" || c.mode == "raw" {
-			return c, errors.New("client certificate authentication requires serve or joinserve with acme, private or byo mode")
+			return c, errors.New("client certificate authentication requires a serving command with acme, private or byo mode")
 		}
 		for _, value := range c.clientCertAuth {
 			if _, err := parseClientCertFingerprint(value); err != nil {
@@ -258,7 +274,14 @@ func validateConfig(c config) (config, error) {
 			return c, errors.New("forwarding options require serve or joinserve")
 		}
 	} else {
-		if c.target == "" {
+		if c.command == "file-serve" {
+			if c.mode == "raw" {
+				return c, errors.New("file-serve cannot use raw mode")
+			}
+			if c.root == "" {
+				return c, errors.New("--root requires a directory")
+			}
+		} else if c.target == "" {
 			return c, errors.New("serve requires -t, --target")
 		}
 		switch c.mode {
@@ -497,7 +520,7 @@ func executeConfig(ctx context.Context, c config, out io.Writer) error {
 		return nil
 	case "serve":
 		return runServe(ctx, setup, c, trust, out, storage)
-	case "joinserve":
+	case "joinserve", "file-serve":
 		return runJoinServe(ctx, c, trust, join, out)
 	default:
 		return fmt.Errorf("unknown command %s", c.command)
@@ -532,9 +555,21 @@ func runServe(ctx, setup context.Context, c config, trust *tls.Config, out io.Wr
 func runJoinServe(ctx context.Context, c config, trust *tls.Config, join tunnel.JoinWaitOptions, out io.Writer) error {
 	setup, cancel := context.WithTimeout(ctx, c.setupTimeout)
 	defer cancel()
-	addresses, err := targets(setup, c.target)
-	if err != nil {
-		return fmt.Errorf("-target: %w", err)
+	var addresses []string
+	var files http.Handler
+	var err error
+	if c.command == "file-serve" {
+		var closeFiles func() error
+		files, closeFiles, err = newFileHandler(c.root, c.browse, c.revealSymlinks)
+		if err != nil {
+			return fmt.Errorf("--root: %w", err)
+		}
+		defer func() { _ = closeFiles() }()
+	} else {
+		addresses, err = targets(setup, c.target)
+		if err != nil {
+			return fmt.Errorf("-target: %w", err)
+		}
 	}
 	listen := func(ctx context.Context, client *tunnel.Client) (net.Listener, error) {
 		return listener(ctx, c, client)
@@ -543,14 +578,22 @@ func runJoinServe(ctx context.Context, c config, trust *tls.Config, join tunnel.
 	if err != nil {
 		return fmt.Errorf("ensure joined and listen: %w", err)
 	}
-	return serveClient(ctx, c, client, l, addresses, out)
+	return serveClientWithHandler(ctx, c, client, l, addresses, files, out)
 }
 
 // serveClient owns the client and listener once either setup path succeeds.
 func serveClient(ctx context.Context, c config, client *tunnel.Client, l net.Listener, addresses []string, out io.Writer) error {
+	return serveClientWithHandler(ctx, c, client, l, addresses, nil, out)
+}
+
+func serveClientWithHandler(ctx context.Context, c config, client *tunnel.Client, l net.Listener, addresses []string, files http.Handler, out io.Writer) error {
 	defer func() { _ = client.Close() }()
 	defer func() { _ = l.Close() }()
-	if _, err := fmt.Fprintf(out, "serving %s (%s) -> %s\n", c.name, c.mode, c.target); err != nil {
+	destination := c.target
+	if files != nil {
+		destination = c.root
+	}
+	if _, err := fmt.Fprintf(out, "serving %s (%s) -> %s\n", c.name, c.mode, destination); err != nil {
 		return fmt.Errorf("write serve banner: %w", err)
 	}
 	auth, err := prepareBasicAuth(c, out)
@@ -570,6 +613,13 @@ func serveClient(ctx context.Context, c config, client *tunnel.Client, l net.Lis
 	bearers, err := prepareBearerAuth(c, out)
 	if err != nil {
 		return err
+	}
+	if files != nil {
+		handler := authenticatedHandler(files, auth, cookies, bearers)
+		if c.accessLog {
+			handler = accessLogged(handler, out)
+		}
+		return serveHTTP(ctx, client, l, handler, c.drainTimeout, c.mode == "http", out)
 	}
 	return forwardHTTP(ctx, client, l, addresses, c.dialTimeout, c.drainTimeout, c.mode == "http", auth, cookies, bearers, out)
 }

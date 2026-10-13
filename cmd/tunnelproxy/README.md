@@ -1,6 +1,6 @@
 # tunnelproxy
 
-`tunnelproxy` exposes a loopback web service through your tunnel server. It terminates public HTTPS locally and can protect the service with Basic authentication, a browser sign-in page, or TLS client certificates.
+`tunnelproxy` exposes a loopback web service or serves local files through your tunnel server. It terminates public HTTPS locally and can protect the service with Basic authentication, a browser sign-in page, Bearer tokens, or TLS client certificates.
 
 See the [project README](https://github.com/fasmide/tunnel/blob/main/README.md) for the architecture and public-server setup.
 
@@ -57,6 +57,52 @@ No fingerprint is needed once daemon trust has been saved. To submit a request w
 ```
 
 Keep the private state directory persistent. Use `--state` to select it; by default it is `$XDG_CONFIG_HOME/tunnelproxy` or `~/.config/tunnelproxy` on Linux. A hostname grant also covers its descendants; the administrator can list grants with `tunnelctl routes` and revoke access with `tunnelctl revoke IDENTITY_ID`.
+
+## Serve files directly
+
+`file-serve` serves a directory through the tunnel without a local backend or
+listening port. Like `joinserve`, it uses the saved identity when available and
+requests access and waits for approval when needed:
+
+```sh
+./bin/tunnelproxy file-serve \
+  --server tunnel.example.net \
+  --name files.tunnel.example.net \
+  --fingerprint YOUR_DAEMON_CA_SHA256 \
+  --root ./public
+
+# Enable directory browsing, request logging, and browser sign-in:
+./bin/tunnelproxy file-serve \
+  --server tunnel.example.net \
+  --name files.tunnel.example.net \
+  --root ./public --browse --access-log --cookieauth
+```
+
+- `--root` defaults to the current working directory. Choose a dedicated public
+  directory: dotfiles and other readable files inside it are not automatically
+  hidden. Symlinks cannot escape the selected root.
+- Directory listings are disabled by default; directories with no `index.html`
+  return `404`. `--browse` enables listings; existing index files still take
+  precedence. This does not prohibit access to files by their known names.
+- `--reveal-symlinks` shows stored symlink target paths alongside names when
+  `--browse` is enabled. Targets are hidden by default; symlink names remain
+  listed. This flag does not enable browsing or permit serving outside the root.
+  Revealed targets may disclose filesystem paths, so enable it intentionally.
+- `--access-log` enables JSON request records on stdout, including source address,
+  method, path, status, response bytes and duration. Authorization headers,
+  cookies, bodies and URL queries are omitted. Access logging is off by default;
+  startup, approval, authentication and shutdown messages are still emitted.
+- Supports GET/HEAD, MIME detection, byte ranges, Last-Modified conditional
+  requests, and canonical directory/index redirects. Other methods return `405`.
+- All existing authentication flags are available, with the same mutual
+  exclusions and generated-secret behavior. TLS client authentication uses the
+  same listener as reverse proxying. Linux argv credential redaction also applies.
+- Supports `acme` (default), `private`, `byo`, and `http`, with the existing TLS
+  and graceful-shutdown options. `raw`, `--target`, and `--target-timeout` do not
+  apply. HTTP mode retains the existing cleartext-auth warnings.
+
+This is a static file server, not a Caddy configuration engine: it does not
+execute templates, provide SPA fallbacks, or support Caddyfile directives.
 
 ## Serving modes
 
