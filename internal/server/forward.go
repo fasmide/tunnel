@@ -102,8 +102,13 @@ func (s *Server) openForward(public net.Conn, host, class string) (*quic.Stream,
 		m.mu.Unlock()
 		return nil, nil, nil, fmt.Errorf("open tunnel stream: %w", err)
 	}
-	stats := m.routeStatsLocked(host)
-	stats.connections.Add(1)
+	// Subtree routing accepts public-chosen names, but only exact grants may
+	// allocate counters that live for the lifetime of the manager.
+	var stats *routeStats
+	if m.owners[host] != "" {
+		stats = m.routeStatsLocked(host)
+		stats.connections.Add(1)
+	}
 	f := &forwarding{host: host, listenerID: member.ListenerID, initializing: true, public: public, stream: stream}
 	target.active[f] = true
 	target.lastStreamID = int64(stream.StreamID())
