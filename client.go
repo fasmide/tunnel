@@ -36,6 +36,10 @@ type dialOptions struct {
 var ErrIdentityNotApproved = errors.New("identity is not approved for forwarding")
 var ErrIdentityRevoked = errors.New("identity revoked")
 
+// ErrJoinExpired means the pending request expired; call EnsureJoined again to
+// submit a new request. It also matches ErrIdentityNotApproved.
+var ErrJoinExpired = fmt.Errorf("join request expired: %w", ErrIdentityNotApproved)
+
 func WithCredentials(c Credentials) Option {
 	return func(o *dialOptions) error {
 		if c.PublicKey() == nil {
@@ -182,6 +186,9 @@ func (c *Client) connect(ctx context.Context) (*clientSession, wire.RouteList, e
 	var routes wire.RouteList
 	if err = decodeRoutes(data, &routes); err != nil {
 		return nil, routes, err, true
+	}
+	if routes.ID == "1" && routes.Identity == c.options.credentials.Identity() && routes.Status == "expired" {
+		return nil, routes, ErrJoinExpired, true
 	}
 	if routes.ID != "1" || routes.Identity != c.options.credentials.Identity() || routes.Status != "approved" {
 		return nil, routes, ErrIdentityNotApproved, true

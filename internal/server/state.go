@@ -44,11 +44,23 @@ type RouteRecord struct {
 	SmoothedRTT  string `json:"smoothed_rtt,omitempty"`
 	MinRTT       string `json:"min_rtt,omitempty"`
 }
+
+// Invite lifetimes are server-controlled; authorization grants do not expire.
+const (
+	InviteLifetime  = 7 * 24 * time.Hour
+	InviteRetention = 24 * time.Hour
+	maxInvites      = 10000
+	maxInviteBytes  = 8 * 1024 * 1024
+)
+
 type Invite struct {
-	ID       string    `json:"id"`
-	Identity string    `json:"identity"`
-	Join     wire.Join `json:"join"`
-	Status   string    `json:"status"`
+	ID         string    `json:"id"`
+	Identity   string    `json:"identity"`
+	Join       wire.Join `json:"join"`
+	Status     string    `json:"status"`
+	CreatedAt  int64     `json:"created_at,omitempty"`
+	ExpiresAt  int64     `json:"expires_at,omitempty"`
+	FinishedAt int64     `json:"finished_at,omitempty"`
 }
 type diskState struct {
 	Version    int                       `json:"version"`
@@ -102,18 +114,44 @@ func OpenManager(storage StateStorage) (*Manager, error) {
 		g.revoked = record.Revoked
 		m.grants[id] = g
 	}
+	now := time.Now().Unix()
+	migrated := false
 	for id, invite := range state.Invites {
 		pub, err := wire.Base64(invite.Join.Request.Pubkey, 32)
 		if err != nil || invite.ID != id || invite.Identity != Identity(pub) || wire.VerifyJoin(invite.Join, pub) != nil {
 			return nil, errors.New("invalid stored invite")
 		}
-		if invite.Status != "pending" && invite.Status != "approved" && invite.Status != "rejected" {
+		if invite.Status != "pending" && invite.Status != "approved" && invite.Status != "rejected" && invite.Status != "expired" {
 			return nil, errors.New("invalid invite status")
+		}
+		// Version 1 snapshots predate lifecycle timestamps. Give legacy pending
+		// requests a full grace period, persisted once so restarts cannot renew it.
+		if invite.CreatedAt == 0 && invite.ExpiresAt == 0 && invite.FinishedAt == 0 {
+			invite.CreatedAt = now
+			invite.ExpiresAt = now + int64(InviteLifetime/time.Second)
+			if invite.Status != "pending" {
+				invite.FinishedAt = now
+			}
+			state.Invites[id] = invite
+			migrated = true
+		}
+		if invite.CreatedAt <= 0 || invite.ExpiresAt <= invite.CreatedAt ||
+			(invite.Status == "pending" && invite.FinishedAt != 0) ||
+			(invite.Status != "pending" && invite.FinishedAt < invite.CreatedAt) {
+			return nil, errors.New("invalid invite lifecycle")
 		}
 	}
 	m.invites = state.Invites
 	m.revision = revision
 	m.storage = storage
+	if migrated {
+		if err := m.persistLocked(m.stateLocked()); err != nil {
+			return nil, err
+		}
+	}
+	if err := m.CleanupInvites(); err != nil {
+		return nil, err
+	}
 	return m, nil
 }
 func (m *Manager) stateLocked() diskState {
@@ -175,6 +213,9 @@ func (m *Manager) SubmitJoin(pub ed25519.PublicKey, j wire.Join) wire.JoinResult
 	if g.revoked {
 		return fail("revoked", "identity is revoked")
 	}
+	if err := m.cleanupInvitesLocked(time.Now().Unix()); err != nil {
+		return fail("invalid_request", err.Error())
+	}
 	payload, _ := wire.JoinBytes(j.Request)
 	digest := sha256.Sum256(payload)
 	for _, invite := range m.invites {
@@ -188,16 +229,22 @@ func (m *Manager) SubmitJoin(pub ed25519.PublicKey, j wire.Join) wire.JoinResult
 		}
 		result.InviteID = invite.ID
 		result.Status = invite.Status
+		if invite.Status == "expired" {
+			return fail("expired", "join request expired; submit a fresh request")
+		}
 		result.Code = "ok"
 		return result
 	}
 	timestamp, err := wire.Timestamp(j.Request)
 	now := time.Now().Unix()
-	if err != nil || timestamp < now-300 || timestamp > now+300 {
+	if err == nil && timestamp < now-300 {
+		return fail("expired", "join request expired; submit a fresh request")
+	}
+	if err != nil || timestamp > now+300 {
 		return fail("invalid_request", "join timestamp outside five-minute window")
 	}
-	if len(m.invites) >= 10000 {
-		return fail("rate_limited", "join history limit reached")
+	if len(m.invites) >= maxInvites {
+		return fail("rate_limited", "invite capacity reached; retry after requests expire")
 	}
 	count := 0
 	for _, invite := range m.invites {
@@ -213,9 +260,17 @@ func (m *Manager) SubmitJoin(pub ed25519.PublicKey, j wire.Join) wire.JoinResult
 		return fail("invalid_request", err.Error())
 	}
 	inviteID := hex.EncodeToString(nonce[:])
-	invite := Invite{ID: inviteID, Identity: id, Join: j, Status: "pending"}
+	invite := Invite{ID: inviteID, Identity: id, Join: j, Status: "pending", CreatedAt: now, ExpiresAt: now + int64(InviteLifetime/time.Second)}
 	state := m.stateLocked()
 	state.Invites[inviteID] = invite
+	// Keep unapproved input from consuming the entire authorization snapshot.
+	data, err := json.Marshal(state.Invites)
+	if err != nil {
+		return fail("invalid_request", err.Error())
+	}
+	if len(data) > maxInviteBytes {
+		return fail("rate_limited", "invite storage capacity reached; retry after requests expire")
+	}
 	if err := m.persistLocked(state); err != nil {
 		return fail("invalid_request", err.Error())
 	}
@@ -240,7 +295,7 @@ func (m *Manager) Invites() []Invite {
 	defer m.mu.Unlock()
 	out := []Invite{}
 	for _, invite := range m.invites {
-		if invite.Status == "pending" {
+		if invite.Status == "pending" && time.Now().Unix() < invite.ExpiresAt {
 			out = append(out, cloneInvite(invite))
 		}
 	}
@@ -378,8 +433,8 @@ func formatRTT(value time.Duration) string {
 func (m *Manager) DecideInvite(id string, approve bool) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.stateErr != nil {
-		return nil, m.stateErr
+	if err := m.cleanupInvitesLocked(time.Now().Unix()); err != nil {
+		return nil, err
 	}
 	invite, ok := m.invites[id]
 	if !ok {
@@ -392,6 +447,9 @@ func (m *Manager) DecideInvite(id string, approve bool) ([]string, error) {
 	if invite.Status == status {
 		return []string{}, nil
 	}
+	if invite.Status == "expired" {
+		return nil, errors.New("invite expired")
+	}
 	if invite.Status != "pending" {
 		return nil, errors.New("invite already decided")
 	}
@@ -401,6 +459,7 @@ func (m *Manager) DecideInvite(id string, approve bool) ([]string, error) {
 	}
 	state := m.stateLocked()
 	invite.Status = status
+	invite.FinishedAt = time.Now().Unix()
 	state.Invites[id] = invite
 	warnings := []string{}
 	routes := append([]string{}, g.routes...)

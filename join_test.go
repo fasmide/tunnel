@@ -3,8 +3,12 @@ package tunnel
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"io/fs"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -120,7 +124,7 @@ func TestPersistentJoinsAndDecisions(t *testing.T) {
 	old.Request.Nonce = base64.StdEncoding.EncodeToString(append([]byte{7}, make([]byte, 31)...))
 	old.Request.Timestamp = "1"
 	signJoin(t, c, &old)
-	if result := m.SubmitJoin(c.PublicKey(), old); result.Code != "invalid_request" {
+	if result := m.SubmitJoin(c.PublicKey(), old); result.Code != "expired" {
 		t.Fatal("stale new request accepted")
 	}
 	listed := m.Invites()
@@ -193,6 +197,43 @@ func TestPersistentJoinsAndDecisions(t *testing.T) {
 	}
 	if !revoked.Identities()[c.Identity()].Revoked || revoked.SubmitJoin(c.PublicKey(), j).Code != "revoked" {
 		t.Fatal("revocation not durable")
+	}
+}
+
+func TestRequestJoinRefreshesExpiredSavedRequest(t *testing.T) {
+	m := server.NewManager()
+	s, _, config := runningManager(t, m)
+	store := MemoryStorage()
+	creds, err := loadOrCreateCredentials(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	j := signedJoin(t, creds, "alice.example.com")
+	j.Request.Timestamp = "1"
+	signJoin(t, creds, &j)
+	data, err := json.Marshal(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverID := sha256.Sum256([]byte(s.Addr()))
+	key := "creds/join/" + hex.EncodeToString(serverID[:])
+	if err := store.Put(key, data); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	got, err := RequestJoin(ctx, s.Addr(), JoinRequest{Routes: []string{"alice.example.com"}, Storage: store, Metadata: map[string]string{"agent": "test"}, TLSConfig: config})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Identity() != creds.Identity() || len(m.Invites()) != 1 {
+		t.Fatal("refresh lost identity or invite")
+	}
+	if m.Invites()[0].Join.Request.Nonce == j.Request.Nonce {
+		t.Fatal("refresh reused expired nonce")
+	}
+	if _, err := store.Get(key); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal("saved request not cleared", err)
 	}
 }
 

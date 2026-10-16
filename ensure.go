@@ -146,6 +146,8 @@ func waitApprovedState(ctx context.Context, addr string, creds Credentials, tran
 			return Credentials{}, fmt.Errorf("approval wait canceled: %w", ctx.Err())
 		}
 		switch {
+		case errors.Is(err, ErrJoinExpired):
+			return Credentials{}, err
 		case errors.Is(err, ErrIdentityNotApproved):
 			if !emittedWaiting {
 				emittedWaiting = true

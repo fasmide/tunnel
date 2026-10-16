@@ -37,6 +37,10 @@ func RequestJoin(ctx context.Context, addr string, request JoinRequest) (Credent
 }
 
 func requestJoin(ctx context.Context, addr string, request JoinRequest) (Credentials, wire.JoinResult, error) {
+	return requestJoinAttempt(ctx, addr, request, true)
+}
+
+func requestJoinAttempt(ctx context.Context, addr string, request JoinRequest, refreshExpired bool) (Credentials, wire.JoinResult, error) {
 	if request.Storage == nil {
 		return Credentials{}, wire.JoinResult{}, errors.New("join storage is required")
 	}
@@ -154,6 +158,16 @@ func requestJoin(ctx context.Context, addr string, request JoinRequest) (Credent
 	}
 	if result.Type != "JoinResult" || result.ID != "1" {
 		return Credentials{}, wire.JoinResult{}, errors.New("unexpected join response")
+	}
+	// Only refresh after the server explicitly confirms expiration. An old
+	// timestamp alone does not imply expiration: accepted pending requests can
+	// still be retried idempotently for their full server-side lifetime.
+	if result.Code == "expired" && refreshExpired {
+		if err := request.Storage.Delete(pendingKey); err != nil {
+			return Credentials{}, wire.JoinResult{}, fmt.Errorf("delete expired join request: %w", err)
+		}
+		_ = conn.CloseWithError(0, "refresh expired join")
+		return requestJoinAttempt(ctx, addr, request, false)
 	}
 	if result.Code != "ok" || result.Status != "pending" && result.Status != "approved" {
 		return Credentials{}, wire.JoinResult{}, errors.New("join rejected: " + result.Error)

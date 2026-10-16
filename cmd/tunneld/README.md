@@ -40,6 +40,27 @@ constraints and excluding private keys. See the tunnelctl guide for inspection
 and browser-import instructions. Default ACME application certificates do not
 require importing this CA.
 
+## Invite expiry
+
+Pending access requests expire after **7 days**, using server-recorded timestamps.
+Expired requests cannot be approved; the client must submit a fresh request.
+Approval and rejection results, and expired requests, are retained for **24 hours**
+for idempotent retries and then deleted. This cleanup never removes route grants
+or revocations. Legacy pending requests receive a one-time seven-day grace period
+when first loaded by this version.
+
+Cleanup is durable and runs on startup, every minute while serving, and before
+new submissions or decisions. `tunnelctl invites` lists only unexpired pending
+requests. Invite storage is bounded to 10,000 records and an 8 MiB admission
+budget, separately from the 32 MiB authorization snapshot limit. Capacity errors
+are temporary: abandoned requests and retained decisions age out automatically.
+These lifetimes and limits are currently server constants, not CLI flags.
+
+Clients refresh an unresolved saved request once when the server explicitly
+reports expiration. An approval wait that observes expiry returns
+`ErrJoinExpired`; rerun the client (or call `EnsureJoined` again) to submit a fresh
+request rather than automatically resubmitting indefinitely.
+
 ## Configuration and deployment
 
 Defaults are `/var/lib/tunneld` for private persistent state, `/run/tunneld/admin.sock` for administration, UDP `:7443` for QUIC, TCP `:443` for public TLS, and TCP `:80` for public HTTP. Flags can override these. Keep state persistent and private, and protect the local admin socket: it grants control over identities and routes.

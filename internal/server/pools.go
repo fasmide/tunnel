@@ -245,12 +245,14 @@ func (m *Manager) snapshotLocked(s *session, requestID string) wire.RouteList {
 	} else {
 		for _, invite := range m.invites {
 			if invite.Identity == s.identity {
-				if invite.Status == "pending" {
+				if invite.Status == "pending" && time.Now().Unix() < invite.ExpiresAt {
 					status = "pending"
 					break
 				}
 				if invite.Status == "rejected" {
 					status = "rejected"
+				} else if status == "unknown" && (invite.Status == "expired" || invite.Status == "pending" && time.Now().Unix() >= invite.ExpiresAt) {
+					status = "expired"
 				}
 			}
 		}

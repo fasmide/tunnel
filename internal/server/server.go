@@ -107,8 +107,22 @@ func listen(addr string, tlsConfig *tls.Config, manager *Manager, issuer *transp
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{listener: listener, manager: manager, ctx: ctx, cancel: cancel, slots: make(chan struct{}, 256), perIP: map[string]int{}, perKey: map[string]int{}, edges: map[*TLSEdge]bool{}, joins: map[string]joinRate{}, issuer: issuer}
-	s.wg.Add(1)
+	s.wg.Add(2)
 	go s.accept()
+	go func() {
+		defer s.wg.Done()
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Persistence failure freezes manager mutations via persistLocked.
+				_ = manager.CleanupInvites()
+			}
+		}
+	}()
 	return s, nil
 }
 
