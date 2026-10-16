@@ -49,7 +49,7 @@ func TestJoinApproveHTTPSAndPersistentRevoke(t *testing.T) {
 		t.Fatal("pending identity connected")
 	}
 	socket := filepath.Join(t.TempDir(), "admin.sock")
-	admin, err := server.ListenAdmin(socket, m, "", "")
+	admin, err := server.ListenAdmin(socket, m, "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestPersistentJoinsAndDecisions(t *testing.T) {
 		t.Fatal("restart lost nonce dedup")
 	}
 	socket := filepath.Join(t.TempDir(), "admin.sock")
-	admin, err := server.ListenAdmin(socket, reloaded, "", "")
+	admin, err := server.ListenAdmin(socket, reloaded, "", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}

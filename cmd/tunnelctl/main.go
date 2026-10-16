@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +19,7 @@ import (
 	"github.com/fasmide/tunnel"
 	"github.com/fasmide/tunnel/internal/cli"
 	"github.com/fasmide/tunnel/internal/server"
+	"github.com/fasmide/tunnel/internal/transportpki"
 	"github.com/spf13/cobra"
 )
 
@@ -63,6 +66,7 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 		{"revoke IDENTITY_ID", "Revoke an identity and disconnect its clients", cobra.ExactArgs(1)},
 		{"set-routes IDENTITY_ID [HOSTNAME...]", "Replace an identity's hostname grants (omit names to clear)", cobra.MinimumNArgs(1)},
 		{"fingerprint", "Print the daemon CA fingerprint", cobra.NoArgs},
+		{"extract-public-ca", "Export the constrained public CA as browser-importable PEM", cobra.NoArgs},
 	} {
 		child := &cobra.Command{Use: spec.use, Short: spec.short, Args: spec.args, RunE: execute}
 		if child.Name() == "approve" {
@@ -74,6 +78,10 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 		}
 		if spec.use == "fingerprint" {
 			child.Long = "Print the local daemon's CA fingerprint, or fetch one with --server.\nA remotely fetched fingerprint is not verified: compare it through a trusted channel."
+		}
+		if spec.use == "extract-public-ca" {
+			child.Long = "Export the running local daemon's generated public CA as PEM on stdout.\nRedirect to a .crt file for browser import. The signed DNS/IP constraints are preserved; no private key is exported.\nRequires tunneld --domain mode. Remote extraction and --json are not supported."
+			child.Example = "  tunnelctl extract-public-ca > tunneld-ca.crt"
 		}
 		root.AddCommand(child)
 	}
@@ -116,6 +124,16 @@ func validateConfig(c config, remaining []string) (config, error) {
 		}
 		c.request.ID = remaining[1]
 		c.request.Routes = remaining[2:]
+	case "extract-public-ca":
+		if len(remaining) != 1 {
+			return c, fmt.Errorf("unexpected arguments")
+		}
+		if c.server != "" || c.serverName != "" {
+			return c, fmt.Errorf("extract-public-ca uses only the trusted local admin socket; --server and --server-name are not supported")
+		}
+		if c.jsonOutput {
+			return c, fmt.Errorf("extract-public-ca outputs PEM; --json is not supported")
+		}
 	case "fingerprint":
 		if len(remaining) != 1 {
 			return c, fmt.Errorf("unexpected arguments")
@@ -155,6 +173,13 @@ func run(args []string, stdout, stderr *os.File, stdin io.Reader) error {
 func executeConfig(c config, stdout, stderr *os.File, stdin io.Reader) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	if c.request.Command == "extract-public-ca" {
+		result, err := server.AdminCall(ctx, c.socket, c.request)
+		if err != nil {
+			return fmt.Errorf("request public CA: %w", err)
+		}
+		return writePublicCA(stdout, result)
+	}
 	if c.request.Command == "fingerprint" {
 		if c.server != "" {
 			trust, err := tunnel.FetchTransportTrust(ctx, c.server, c.serverName)
@@ -198,6 +223,29 @@ func executeConfig(c config, stdout, stderr *os.File, stdin io.Reader) error {
 		return nil
 	}
 	return writeAdminResult(stdout, c, result)
+}
+
+// writePublicCA emits only the original certificate, never a regenerated root or
+// a private key. Validate before writing anything so failures leave stdout empty.
+func writePublicCA(out io.Writer, result server.AdminResult) error {
+	block, rest := pem.Decode([]byte(result.PublicCA))
+	if block == nil || block.Type != "CERTIFICATE" || len(block.Headers) != 0 || len(rest) != 0 {
+		return errors.New("daemon did not return exactly one public CA certificate")
+	}
+	ca, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return fmt.Errorf("parse public CA: %w", err)
+	}
+	if err := transportpki.ValidateCA(ca); err != nil {
+		return fmt.Errorf("validate public CA constraints: %w", err)
+	}
+	if ca.PermittedDNSDomains[0] != result.Domain || transportpki.Fingerprint(ca) != result.Fingerprint {
+		return errors.New("public CA does not match daemon domain/fingerprint")
+	}
+	if err := pem.Encode(out, &pem.Block{Type: "CERTIFICATE", Bytes: ca.Raw}); err != nil {
+		return fmt.Errorf("write public CA: %w", err)
+	}
+	return nil
 }
 
 func writeFingerprint(out io.Writer, fingerprint string, jsonOutput bool) error {

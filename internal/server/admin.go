@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/x509"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"net"
@@ -10,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fasmide/tunnel/internal/transportpki"
 	"github.com/fasmide/tunnel/internal/wire"
 )
 
@@ -26,13 +29,14 @@ type AdminResult struct {
 	Routes      []RouteRecord             `json:"routes"`
 	Fingerprint string                    `json:"fingerprint"`
 	Domain      string                    `json:"domain"`
+	PublicCA    string                    `json:"public_ca,omitempty"`
 }
 
 func (m *Manager) Admin(request AdminRequest) AdminResult {
-	return m.admin(request, "", "")
+	return m.admin(request, "", "", "")
 }
 
-func (m *Manager) admin(request AdminRequest, fingerprint, domain string) AdminResult {
+func (m *Manager) admin(request AdminRequest, fingerprint, domain, publicCA string) AdminResult {
 	result := AdminResult{Warnings: []string{}, Invites: []Invite{}, Identities: map[string]IdentityRecord{}, Routes: []RouteRecord{}}
 	var err error
 	switch request.Command {
@@ -44,6 +48,14 @@ func (m *Manager) admin(request AdminRequest, fingerprint, domain string) AdminR
 		if fingerprint == "" {
 			err = errors.New("transport fingerprint unavailable")
 		} else {
+			result.Fingerprint = fingerprint
+			result.Domain = domain
+		}
+	case "extract-public-ca":
+		if publicCA == "" {
+			err = errors.New("generated public CA unavailable; requires tunneld --domain mode")
+		} else {
+			result.PublicCA = publicCA
 			result.Fingerprint = fingerprint
 			result.Domain = domain
 		}
@@ -75,6 +87,7 @@ type AdminSocket struct {
 	manager     *Manager
 	fingerprint string
 	domain      string
+	publicCA    string
 	wg          sync.WaitGroup
 	once        sync.Once
 	mu          sync.Mutex
@@ -83,9 +96,27 @@ type AdminSocket struct {
 	slots       chan struct{}
 }
 
-func ListenAdmin(path string, m *Manager, fingerprint, domain string) (*AdminSocket, error) {
+func ListenAdmin(path string, m *Manager, fingerprint, domain, publicCA string) (*AdminSocket, error) {
 	if m == nil {
 		return nil, errors.New("nil manager")
+	}
+	if publicCA != "" {
+		block, rest := pem.Decode([]byte(publicCA))
+		if block == nil || block.Type != "CERTIFICATE" || len(rest) != 0 || len(block.Headers) != 0 {
+			return nil, errors.New("expected exactly one public CA certificate")
+		}
+		ca, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("parse public CA: %w", err)
+		}
+		if err := transportpki.ValidateCA(ca); err != nil {
+			return nil, fmt.Errorf("validate public CA constraints: %w", err)
+		}
+		if ca.PermittedDNSDomains[0] != domain || transportpki.Fingerprint(ca) != fingerprint {
+			return nil, errors.New("public CA does not match daemon domain/fingerprint")
+		}
+		// Re-encode the original signed DER, preserving every name constraint.
+		publicCA = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: ca.Raw}))
 	}
 	// Never remove an existing socket blindly: it might belong to a live daemon.
 	lc := net.ListenConfig{}
@@ -97,7 +128,7 @@ func ListenAdmin(path string, m *Manager, fingerprint, domain string) (*AdminSoc
 		_ = listener.Close()
 		return nil, fmt.Errorf("chmod admin socket: %w", err)
 	}
-	a := &AdminSocket{listener: listener, manager: m, fingerprint: fingerprint, domain: domain, peers: map[net.Conn]bool{}, slots: make(chan struct{}, 32)}
+	a := &AdminSocket{listener: listener, manager: m, fingerprint: fingerprint, domain: domain, publicCA: publicCA, peers: map[net.Conn]bool{}, slots: make(chan struct{}, 32)}
 	a.wg.Add(1)
 	go a.accept()
 	return a, nil
@@ -157,7 +188,7 @@ func (a *AdminSocket) accept() {
 			if err = wire.DecodeFrame(data, &request, "command", "id", "routes"); err != nil {
 				return
 			}
-			_ = wire.WriteAdminFrame(conn, a.manager.admin(request, a.fingerprint, a.domain))
+			_ = wire.WriteAdminFrame(conn, a.manager.admin(request, a.fingerprint, a.domain, a.publicCA))
 		}()
 	}
 }

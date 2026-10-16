@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -168,12 +169,13 @@ func executeConfig(c config, out io.Writer) error {
 	if err := prepareSocketPath(c.pprofPath, "pprof socket"); err != nil {
 		return err
 	}
-	fingerprint, domain := "", ""
+	fingerprint, domain, publicCA := "", "", ""
 	if issuer != nil {
 		fingerprint = issuer.Fingerprint()
-		domain = c.domain
+		domain = strings.ToLower(strings.TrimSuffix(c.domain, "."))
+		publicCA = string(issuer.PEM())
 	}
-	admin, err := server.ListenAdmin(socket, manager, fingerprint, domain)
+	admin, err := server.ListenAdmin(socket, manager, fingerprint, domain, publicCA)
 	if err != nil {
 		return fmt.Errorf("listen on admin socket: %w", err)
 	}

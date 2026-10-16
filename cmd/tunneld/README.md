@@ -28,6 +28,18 @@ In another root shell:
 
 Share the fingerprint with application operators through a trusted channel. They can then follow the [tunnelproxy guide](https://github.com/fasmide/tunnel/blob/main/cmd/tunnelproxy/README.md) to request access. Use [tunnelctl](https://github.com/fasmide/tunnel/blob/main/cmd/tunnelctl/README.md) to inspect and approve requests.
 
+For applications using `--mode private`, export the public CA for browser import
+without stopping the daemon:
+
+```sh
+./bin/tunnelctl extract-public-ca > tunneld-ca.crt
+```
+
+This exports only the original public certificate, preserving its signed DNS/IP
+constraints and excluding private keys. See the tunnelctl guide for inspection
+and browser-import instructions. Default ACME application certificates do not
+require importing this CA.
+
 ## Configuration and deployment
 
 Defaults are `/var/lib/tunneld` for private persistent state, `/run/tunneld/admin.sock` for administration, UDP `:7443` for QUIC, TCP `:443` for public TLS, and TCP `:80` for public HTTP. Flags can override these. Keep state persistent and private, and protect the local admin socket: it grants control over identities and routes.
