@@ -44,6 +44,34 @@ func TestCLIHelpAndCompletion(t *testing.T) {
 	}
 }
 
+func TestCLINameUsedAsIs(t *testing.T) {
+	for _, command := range []string{"join", "serve", "file-serve"} {
+		t.Run(command, func(t *testing.T) {
+			args := []string{command, "--server=tunnel.example.net", "--name=test"}
+			if command == "serve" {
+				args = append(args, "--target=127.0.0.1:8080")
+			}
+			parsed, err := parse(args)
+			if err != nil || parsed.name != "test" {
+				t.Fatalf("single-label name must be accepted unchanged: name=%q err=%v", parsed.name, err)
+			}
+			var c config
+			cmd := newCommand(&c, func(config) error { t.Fatal("help ran application"); return nil })
+			var out bytes.Buffer
+			cmd.SetOut(&out)
+			cmd.SetArgs([]string{command, "--help"})
+			if err := cmd.Execute(); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"complete hostname (FQDN)", "used as-is, no suffix appended"} {
+				if !strings.Contains(out.String(), want) {
+					t.Fatalf("help does not explain --name: %s", out.String())
+				}
+			}
+		})
+	}
+}
+
 func TestCLIAuthenticationHelp(t *testing.T) {
 	for _, name := range []string{"serve", "file-serve"} {
 		t.Run(name, func(t *testing.T) {

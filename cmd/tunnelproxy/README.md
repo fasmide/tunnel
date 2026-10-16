@@ -18,6 +18,8 @@ go build -o bin/ ./cmd/tunnelproxy
 
 The examples below use `tunnel.example.net` for the daemon, `app.tunnel.example.net` for the public application, and `127.0.0.1:8080` for your local service. Replace these with yours.
 
+`--name` is the complete hostname (FQDN) to request and serve, such as `app.tunnel.example.net`. It is used **as-is**: neither `--server` nor a DNS search suffix is appended. For example, `--name test` requests exactly `test`, not `test.tunnel.example.net`. Single-label names are supported for LAN/private setups where appropriate. Use lowercase DNS labels without `https://`, a port, or a trailing dot. The hostname must resolve to the tunnel server for visitors and be approved by its administrator; public ACME certificates require a publicly valid domain.
+
 ### Request access and serve
 
 Get the daemon CA's SHA-256 fingerprint from the server administrator through a trusted channel. On the application machine, with the local service running:

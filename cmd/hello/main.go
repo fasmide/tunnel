@@ -42,7 +42,7 @@ func newCommand() *cobra.Command {
 		Args:    cobra.NoArgs, SilenceUsage: true, SilenceErrors: true}
 	flags := cmd.Flags()
 	server := flags.StringP("server", "s", "tunnel.example.net:7443", "daemon QUIC hostname or host:port (default port 7443)")
-	name := flags.StringP("name", "n", "", "public hostname to request/serve")
+	name := flags.StringP("name", "n", "", cli.PublicNameUsage)
 	state := flags.String("state", "", "private state directory (default user config directory/tunnel-hello)")
 	join := flags.Bool("join", false, "submit an access request and exit; administrator approval is required")
 	fingerprint := flags.StringP("fingerprint", "f", "", "verify generated daemon CA using administrator SHA-256 hex")

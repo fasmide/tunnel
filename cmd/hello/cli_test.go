@@ -24,6 +24,30 @@ func TestCLIHelpAndCompletion(t *testing.T) {
 	}
 }
 
+func TestCLINameUsedAsIs(t *testing.T) {
+	cmd := newCommand()
+	cmd.SetArgs([]string{"--name=test", "--state", t.TempDir()})
+	// Missing credentials stops execution locally, after CLI validation.
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "load identity") {
+		t.Fatalf("expected name to pass validation, got %v", err)
+	}
+	if name, err := cmd.Flags().GetString("name"); err != nil || name != "test" {
+		t.Fatalf("single-label name changed: name=%q err=%v", name, err)
+	}
+	cmd = newCommand()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--help"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"complete hostname (FQDN)", "used as-is, no suffix appended"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("help does not explain --name: %s", out.String())
+		}
+	}
+}
+
 func TestServerDefaultPort(t *testing.T) {
 	for input, want := range map[string]string{
 		"tunnel.mide.dk":      "tunnel.mide.dk:7443",

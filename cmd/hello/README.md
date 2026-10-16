@@ -10,6 +10,8 @@ From the repository root:
 go build -o bin/ ./cmd/hello
 ```
 
+`--name` is the complete hostname (FQDN) to request and serve, such as `app.tunnel.example.net`. It is used **as-is**: neither `--server` nor a DNS search suffix is appended. For example, `--name test` requests exactly `test`, not `test.tunnel.example.net`. Single-label names are supported for LAN/private setups where appropriate. Use lowercase DNS labels without a scheme, port, or trailing dot. The hostname must resolve to the tunnel server for visitors and be approved by its administrator; public ACME certificates require a publicly valid domain.
+
 With a running daemon and its CA fingerprint obtained through a trusted channel, submit an access request:
 
 ```sh

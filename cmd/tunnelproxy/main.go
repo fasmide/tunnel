@@ -69,7 +69,7 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 	root.SetUsageTemplate(strings.Replace(root.UsageTemplate(), ".LocalFlags.FlagUsages", "proxyFlagUsages .LocalFlags", 1))
 	flags := root.PersistentFlags()
 	flags.StringVarP(&c.server, "server", "s", "", "daemon QUIC hostname or host:port (default port 7443)")
-	flags.StringVarP(&c.name, "name", "n", "", "approved public name/subtree")
+	flags.StringVarP(&c.name, "name", "n", "", cli.PublicNameUsage)
 	flags.StringVar(&c.state, "state", "", "private state directory (Linux: $XDG_CONFIG_HOME/tunnelproxy or ~/.config/tunnelproxy)")
 	flags.StringVar(&c.serverName, "server-name", "", "transport TLS DNS name override, e.g. when dialing an IP")
 	flags.StringVarP(&c.fingerprint, "fingerprint", "f", "", "bootstrap constrained CA using administrator SHA-256 hex fingerprint")
