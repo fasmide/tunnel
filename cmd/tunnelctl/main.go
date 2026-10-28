@@ -401,7 +401,7 @@ func writeRoutes(w io.Writer, routes []server.RouteRecord, fullID bool) error {
 		txWidth = max(txWidth, len(humanBytes(route.TXBytes)))
 	}
 	wtr := tabwriter.NewWriter(w, 0, 8, 2, ' ', 0)
-	if _, err := fmt.Fprintf(wtr, "IDENTITY\tSTATUS\tAGE\t%s\t%s\t%s\t%s\t%s\t%s\tROUTE\n", rightAlign("LATEST", latestWidth), rightAlign("SMOOTHED", smoothedWidth), rightAlign("MIN", minWidth), rightAlign("CONNS", connWidth), rightAlign("RX", rxWidth), rightAlign("TX", txWidth)); err != nil {
+	if _, err := fmt.Fprintf(wtr, "IDENTITY\tTYPE\tSTATUS\tAGE\t%s\t%s\t%s\t%s\t%s\t%s\tROUTE\n", rightAlign("LATEST", latestWidth), rightAlign("SMOOTHED", smoothedWidth), rightAlign("MIN", minWidth), rightAlign("CONNS", connWidth), rightAlign("RX", rxWidth), rightAlign("TX", txWidth)); err != nil {
 		return fmt.Errorf("write routes header: %w", err)
 	}
 	for _, route := range routes {
@@ -414,7 +414,11 @@ func writeRoutes(w io.Writer, routes []server.RouteRecord, fullID bool) error {
 		if !fullID {
 			identity = shortIdentity(identity)
 		}
-		if _, err := fmt.Fprintf(wtr, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", identity, status, age, rightAlign(displayRTT(route.LatestRTT), latestWidth), rightAlign(displayRTT(route.SmoothedRTT), smoothedWidth), rightAlign(displayRTT(route.MinRTT), minWidth), rightAlign(strconv.FormatUint(route.Connections, 10), connWidth), rightAlign(humanBytes(route.RXBytes), rxWidth), rightAlign(humanBytes(route.TXBytes), txWidth), name); err != nil {
+		kind := route.Type
+		if kind == "" {
+			kind = "-" // Older daemons do not report row types.
+		}
+		if _, err := fmt.Fprintf(wtr, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", identity, kind, status, age, rightAlign(displayRTT(route.LatestRTT), latestWidth), rightAlign(displayRTT(route.SmoothedRTT), smoothedWidth), rightAlign(displayRTT(route.MinRTT), minWidth), rightAlign(strconv.FormatUint(route.Connections, 10), connWidth), rightAlign(humanBytes(route.RXBytes), rxWidth), rightAlign(humanBytes(route.TXBytes), txWidth), name); err != nil {
 			return fmt.Errorf("write routes row: %w", err)
 		}
 	}
@@ -483,5 +487,5 @@ func routeStatus(online bool, connectedFor, offlineFor string, revoked bool) (st
 	if revoked {
 		return "revoked", "never connected"
 	}
-	return "offline", "never connected"
+	return "offline", "-"
 }

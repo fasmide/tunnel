@@ -47,7 +47,7 @@ func (s *headerTestStream) CancelWrite(code quic.StreamErrorCode) {
 	s.writeCanceled, s.writeCode = true, code
 }
 
-func TestForwardStatsOnlyForExactGrants(t *testing.T) {
+func TestForwardStatsFollowServingListener(t *testing.T) {
 	m := NewManager()
 	cert, pub := testCertificate(t, false)
 	approve(t, m, pub, "example.net", "exact.example.net")
@@ -140,7 +140,7 @@ func TestForwardStatsOnlyForExactGrants(t *testing.T) {
 		return len(m.stats)
 	}
 
-	// This exact grant uses the parent pool too, but must still accumulate stats.
+	// Even an exact grant uses the serving parent's counters, not its own.
 	forward("exact.example.net")
 	baseline := statsCount()
 	if baseline != 1 {
@@ -158,14 +158,52 @@ func TestForwardStatsOnlyForExactGrants(t *testing.T) {
 	}
 	forward("exact.example.net")
 	for _, route := range m.Routes() {
-		if route.Name == "exact.example.net" {
-			if route.Connections != 2 || route.RXBytes != 2*uint64(len(payload)) || route.TXBytes != 2*uint64(len(response)) {
-				t.Fatalf("unexpected exact-grant counters: %+v", route)
+		switch route.Name {
+		case "exact.example.net":
+			if !route.Online || route.Type != "grant" || route.Connections != 0 {
+				t.Fatalf("grant served by parent should be online without double counting: %+v", route)
 			}
-			return
+		case "example.net":
+			if route.Connections != 34 || route.RXBytes != 34*uint64(len(payload)) || route.TXBytes != 34*uint64(len(response)) {
+				t.Fatalf("unexpected serving-listener counters: %+v", route)
+			}
 		}
 	}
-	t.Fatal("exact grant missing from routes")
+	data = request(t, control, wire.Advertise{
+		Envelope:   wire.Envelope{Type: "Advertise", ID: "3"},
+		ListenerID: strings.Repeat("b", 32), Name: "child.example.net", Mode: "raw", Revision: m.Revision(),
+	}, "3")
+	if err := json.Unmarshal(data, &ack); err != nil || !ack.OK {
+		t.Fatalf("advertise child: %s, %v", data, err)
+	}
+	forward("child.example.net")
+	forward("nested.child.example.net")
+	found := false
+	for _, route := range m.Routes() {
+		if route.Name == "child.example.net" {
+			found = true
+			if route.Type != "listener" || !route.Online || route.Connections != 2 || route.RXBytes != 2*uint64(len(payload)) || route.TXBytes != 2*uint64(len(response)) {
+				t.Fatalf("unexpected descendant counters: %+v", route)
+			}
+		}
+	}
+	if !found || statsCount() != 2 {
+		t.Fatal("missing descendant listener counters")
+	}
+	m.mu.Lock()
+	var sessionID uint64
+	for id := range m.sessions {
+		sessionID = id
+	}
+	m.mu.Unlock()
+	m.Unadvertise(sessionID, strings.Repeat("b", 32))
+	if statsCount() != 1 {
+		t.Fatal("descendant counters retained after last listener removed")
+	}
+	m.Unadvertise(sessionID, strings.Repeat("a", 32))
+	if statsCount() != 1 {
+		t.Fatal("grant counters lost after listener removed")
+	}
 }
 
 func TestInitializeForwardCleanup(t *testing.T) {

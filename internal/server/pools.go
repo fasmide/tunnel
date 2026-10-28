@@ -392,6 +392,11 @@ func (m *Manager) removeLocked(sessionID uint64, listenerID string) {
 	if len(members) == 0 {
 		delete(m.pools, key)
 	}
+	// Keep historical counters only for durable grants. Descendant listeners
+	// can be arbitrarily renamed, so forget them after their last pool closes.
+	if m.owners[reg.name] == "" && m.pools[poolKey{reg.name, "tls"}] == nil && m.pools[poolKey{reg.name, "http"}] == nil {
+		delete(m.stats, reg.name)
+	}
 }
 
 func (m *Manager) Unadvertise(sessionID uint64, listenerID string) string {
@@ -474,6 +479,13 @@ func (m *Manager) revalidateLocked() {
 		event := m.snapshotLocked(s, "")
 		event.Withdrawn = withdrawn
 		m.notifyLocked(s, event)
+	}
+	// Grant edits may turn retained historical counters into unbounded stale
+	// names. Only current grants and live listener hostnames may retain them.
+	for name := range m.stats {
+		if m.owners[name] == "" && m.pools[poolKey{name, "tls"}] == nil && m.pools[poolKey{name, "http"}] == nil {
+			delete(m.stats, name)
+		}
 	}
 }
 

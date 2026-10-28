@@ -175,9 +175,9 @@ func TestRouteStatus(t *testing.T) {
 		wantStatus: "revoked",
 		wantAge:    "9m",
 	}, {
-		name:       "never connected",
+		name:       "offline age unknown",
 		wantStatus: "offline",
-		wantAge:    "never connected",
+		wantAge:    "-",
 	}, {
 		name:       "revoked never connected",
 		revoked:    true,
@@ -220,8 +220,8 @@ func TestHumanBytes(t *testing.T) {
 
 func TestWriteRoutes(t *testing.T) {
 	routes := []server.RouteRecord{
-		{Identity: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Name: "alt.a.tunnel.example.net", Online: true, ConnectedFor: "15s", Connections: 3, RXBytes: 1536, TXBytes: 2048, LatestRTT: "12ms", SmoothedRTT: "10ms", MinRTT: "8ms"},
-		{Identity: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Name: "a.tunnel.example.net", Online: true, ConnectedFor: "15s", Connections: 12, RXBytes: 1024 * 1024, TXBytes: 3 * 1024 * 1024, LatestRTT: "20ms", SmoothedRTT: "18ms", MinRTT: "9ms"},
+		{Identity: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Name: "alt.a.tunnel.example.net", Type: "listener", Online: true, ConnectedFor: "15s", Connections: 3, RXBytes: 1536, TXBytes: 2048, LatestRTT: "12ms", SmoothedRTT: "10ms", MinRTT: "8ms"},
+		{Identity: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Name: "a.tunnel.example.net", Type: "grant", Online: true, ConnectedFor: "15s", Connections: 12, RXBytes: 1024 * 1024, TXBytes: 3 * 1024 * 1024, LatestRTT: "20ms", SmoothedRTT: "18ms", MinRTT: "9ms"},
 		{Identity: "bbbbbbbbbbbbbbbb", Name: "b.tunnel.example.net", OfflineFor: "3m", Connections: 1, RXBytes: 999, TXBytes: 0},
 		{Identity: "cccccccccccccccccccccccccccccccc", Revoked: true},
 	}
@@ -233,6 +233,9 @@ func TestWriteRoutes(t *testing.T) {
 		text := out.String()
 		for _, want := range []string{
 			"IDENTITY",
+			"TYPE",
+			"grant",
+			"listener",
 			"STATUS",
 			"AGE",
 			"LATEST",
@@ -297,6 +300,7 @@ func TestRoutesJSONEncoding(t *testing.T) {
 	routes := []server.RouteRecord{{
 		Identity:     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Name:         "a.tunnel.example.net",
+		Type:         "grant",
 		Online:       true,
 		ConnectedFor: "15s",
 		Connections:  12,
@@ -316,6 +320,7 @@ func TestRoutesJSONEncoding(t *testing.T) {
 	for _, want := range []string{
 		"\"identity\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
 		"\"name\": \"a.tunnel.example.net\"",
+		"\"type\": \"grant\"",
 		"\"online\": true",
 		"\"connections\": 12",
 		"\"rx_bytes\": 1024",

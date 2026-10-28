@@ -33,6 +33,7 @@ type RouteRecord struct {
 	Identity     string `json:"identity"`
 	Pubkey       string `json:"pubkey"`
 	Name         string `json:"name"`
+	Type         string `json:"type"`
 	Revoked      bool   `json:"revoked"`
 	Online       bool   `json:"online,omitempty"`
 	ConnectedFor string `json:"connected_for,omitempty"`
@@ -333,17 +334,11 @@ func (m *Manager) Routes() []RouteRecord {
 	routes := []RouteRecord{}
 	seen := map[string]bool{}
 	for id, grant := range m.grants {
-		status := RouteRecord{Identity: id, Pubkey: grant.pubkey, Revoked: grant.revoked}
-		if session, ok := m.identitySessionLocked(id); ok {
-			status.Online = true
-			status.ConnectedFor = time.Since(session.connectedAt).Round(time.Second).String()
-			applyRouteRTT(&status, session)
-		} else if !m.grants[id].lastSeen.IsZero() {
-			status.OfflineFor = time.Since(m.grants[id].lastSeen).Round(time.Second).String()
-		}
+		status := RouteRecord{Identity: id, Pubkey: grant.pubkey, Revoked: grant.revoked, Type: "grant"}
 		for _, name := range grant.routes {
 			row := status
 			row.Name = name
+			m.applyRouteAvailability(&row)
 			m.applyRouteStats(&row)
 			routes = append(routes, row)
 			seen[id+"\x00"+name] = true
@@ -365,14 +360,13 @@ func (m *Manager) Routes() []RouteRecord {
 				continue
 			}
 			row := RouteRecord{
-				Identity:     session.identity,
-				Pubkey:       g.pubkey,
-				Name:         reg.name,
-				Revoked:      g.revoked,
-				Online:       true,
-				ConnectedFor: time.Since(session.connectedAt).Round(time.Second).String(),
+				Identity: session.identity,
+				Pubkey:   g.pubkey,
+				Name:     reg.name,
+				Type:     "listener",
+				Revoked:  g.revoked,
 			}
-			applyRouteRTT(&row, session)
+			m.applyRouteAvailability(&row)
 			m.applyRouteStats(&row)
 			routes = append(routes, row)
 			seen[key] = true
@@ -390,13 +384,34 @@ func (m *Manager) Routes() []RouteRecord {
 	return routes
 }
 
-func (m *Manager) identitySessionLocked(identity string) (*session, bool) {
-	for _, session := range m.sessions {
-		if session.identity == identity {
-			return session, true
+// Availability follows the same closest eligible pool lookup as forwarding.
+// A grant may be served by its own listener or by an ancestor listener; a
+// connected identity alone does not make any of its grants available.
+func (m *Manager) applyRouteAvailability(route *RouteRecord) {
+	if route.Revoked || m.stateErr != nil || m.ownerLocked(route.Name) != route.Identity {
+		return
+	}
+	var representative *session
+	for _, class := range []string{"tls", "http"} {
+		for _, parent := range parents(route.Name) {
+			p := m.pools[poolKey{parent, class}]
+			if p == nil || p.owner != route.Identity || len(p.members) == 0 {
+				continue
+			}
+			for _, member := range p.members {
+				s := m.sessions[member.SessionID]
+				if s != nil && !s.restricted && (representative == nil || s.connectedAt.Before(representative.connectedAt)) {
+					representative = s
+				}
+			}
+			break
 		}
 	}
-	return nil, false
+	if representative != nil {
+		route.Online = true
+		route.ConnectedFor = time.Since(representative.connectedAt).Round(time.Second).String()
+		applyRouteRTT(route, representative)
+	}
 }
 
 func (m *Manager) applyRouteStats(route *RouteRecord) {

@@ -33,6 +33,32 @@ Revocation disconnects the identity's clients. `set-routes` replaces the hostnam
 
 Use `--socket` for an alternate admin socket. `fingerprint --server HOST` can inspect a remote daemon's presented fingerprint, but retrieving it over that same connection does not independently authenticate the daemon.
 
+## Route status and counters
+
+`routes` includes a `TYPE` column: `grant` denotes an approved hostname;
+`listener` denotes an actively advertised descendant without its own exact
+grant. An exact grant with a listener appears once, as `grant`.
+
+`online` means an eligible listener can serve that hostname, not merely that the
+identity is connected. A grant can be online through its own listener or an
+ancestor listener; a descendant listener does not make its parent grant online.
+This describes tunnel routing availability, not application health. With multiple
+eligible sessions, age and RTT describe the oldest connected eligible session
+(across HTTP/TLS pools), not an average. Offline routes without a known
+route-specific offline age show `-`.
+
+Counters belong to the **serving listener hostname**, aggregated across its
+instances and HTTP/TLS pools. Descendant requests count against the selected
+ancestor listener, not against the requested hostname or its grant. Thus an
+online grant served by an ancestor can have zero counters of its own. `CONNS`
+counts forwarded connections, not currently open connections; RX/TX count public
+request/response bytes relayed through that listener.
+
+Counters are in memory. Exact-grant counters survive listener disconnects until
+daemon restart; descendant-only counters are discarded when the last listener
+for that hostname is removed. Arbitrary visitor-supplied hostnames never allocate
+counter entries. The JSON output includes the same row classification as `type`.
+
 ## Export the public CA for browsers
 
 When applications use `tunnelproxy --mode private`, export the running daemon's
