@@ -256,6 +256,9 @@ func TestJoinServeModesAndSignalDrain(t *testing.T) {
 			go func() {
 				defer close(backendDone)
 				_ = http.Serve(service, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if mode != "raw" && (r.Host != "localhost" || r.Header.Get("X-Tunnel-Test") != "enforced") {
+						t.Errorf("upstream headers not enforced: host=%q headers=%v", r.Host, r.Header)
+					}
 					if withBearer && r.Header.Get("Authorization") != "" {
 						t.Error("bearer token reached backend")
 					}
@@ -284,6 +287,9 @@ func TestJoinServeModesAndSignalDrain(t *testing.T) {
 			}
 			args := append([]string{"serve"}, common...)
 			args = append(args, targetFlag, target, "-m", mode, "--drain-timeout", "2s")
+			if mode != "raw" {
+				args = append(args, "--header-host", "localhost", "--header-x-tunnel-test=enforced")
+			}
 			if withAuth {
 				args = append(args, "--basicauth=user:secret", "--basicauth=colleague:another-secret")
 			}

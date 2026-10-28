@@ -29,6 +29,7 @@ import (
 type config struct {
 	command, server, name, state, target, mode, cert, key, serverName, fingerprint, email string
 	targetUnixSocket                                                                      string
+	headers                                                                               http.Header
 	tofu, join                                                                            bool
 	basicAuth                                                                             []string
 	basicAuthEnabled                                                                      bool
@@ -139,6 +140,8 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 				serving.BoolVar(&c.revealSymlinks, "reveal-symlinks", false, "show symlink paths when browse is enabled")
 				_ = child.MarkFlagDirname("root")
 			} else {
+				addHeaderFlags(serving, &c.headers)
+				child.Example += "\n\n  # Enforce upstream request headers (last value wins):\n  --header-host localhost --header-x-app-token=secret"
 				serving.StringVarP(&c.target, "target", "t", "", "loopback TCP service, e.g. 127.0.0.1:8080")
 				serving.StringVar(&c.targetUnixSocket, "target-unix-socket", "", "local Unix stream socket path, e.g. /run/app.sock")
 				child.MarkFlagsMutuallyExclusive("target", "target-unix-socket")
@@ -211,6 +214,18 @@ func parse(args []string) (config, error) {
 }
 
 func validateConfig(c config) (config, error) {
+	if len(c.headers) > 0 {
+		if c.command != "serve" || c.mode == "raw" {
+			return c, errors.New("--header-<name> requires serve with an HTTP-aware mode (not raw)")
+		}
+		for name, values := range c.headers {
+			for _, value := range values {
+				if err := validateHeader(name, value); err != nil {
+					return c, fmt.Errorf("--header-%s: %w", strings.ToLower(name), err)
+				}
+			}
+		}
+	}
 	if c.server == "" || c.name == "" {
 		return c, errors.New("-s, --server and -n, --name are required; no positional arguments")
 	}
@@ -642,7 +657,7 @@ func serveClientWithHandler(ctx context.Context, c config, client *tunnel.Client
 		}
 		return serveHTTP(ctx, client, l, handler, c.drainTimeout, c.mode == "http", out)
 	}
-	return forwardHTTP(ctx, client, l, network, addresses, c.dialTimeout, c.drainTimeout, c.mode == "http", auth, cookies, bearers, out)
+	return forwardHTTP(ctx, client, l, network, addresses, c.dialTimeout, c.drainTimeout, c.mode == "http", auth, cookies, bearers, c.headers, out)
 }
 
 type pair struct{ public, local net.Conn }

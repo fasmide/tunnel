@@ -86,6 +86,42 @@ The socket must be accessible to the user running `tunnelproxy`.
 `--target-timeout` applies to socket dialing too. All serving modes support Unix
 sockets; in `raw` mode the upstream must speak TLS, just as with a TCP target.
 
+## Enforce upstream request headers
+
+Use dynamic `--header-<name>` flags on `serve` to set or override headers sent to
+the upstream, for example to select its virtual host:
+
+```sh
+./bin/tunnelproxy serve \
+  --server tunnel.example.net \
+  --name app.tunnel.example.net \
+  --target 127.0.0.1:8080 \
+  --header-host localhost \
+  --header-x-app-name=my-app
+```
+
+- Names are case-insensitive. Both `--header-host localhost` and
+  `--header-host=localhost` work. Quote values containing spaces.
+- Configured values replace all incoming values on every upstream request,
+  including WebSocket upgrades. Repeating a header uses the last supplied value;
+  commas remain literal. An explicit empty value (`--header-x-example=`) sets an
+  empty header value; `Host` must be nonempty.
+- Overrides apply after proxy authentication and generated forwarding headers.
+  For example, `--header-authorization='Bearer upstream-token'` supplies backend
+  credentials without changing what visitors need to authenticate to the proxy.
+  Overriding `Host` does not change public hostname routing or the dialed target;
+  `X-Forwarded-Host` still reflects the public hostname unless also overridden.
+- HTTP transport/framing headers (`Connection`, `Proxy-Connection`, `Keep-Alive`,
+  `Transfer-Encoding`, `Content-Length`, `TE`, `Trailer`, `Upgrade`,
+  `Proxy-Authenticate`, and `Proxy-Authorization`) cannot be overridden. Invalid
+  header names or values are rejected.
+- Supported with TCP and Unix socket targets in `acme`, `private`, `byo`, and
+  `http` modes. Header overrides are rejected in `raw` mode and are not available
+  on `join` or `file-serve`. They modify requests only, not responses.
+
+Header values are not covered by authentication-flag argv redaction. Avoid
+putting sensitive values in command lines exposed to other users or shell history.
+
 ## Serve files directly
 
 `file-serve` serves a directory through the tunnel without a local backend or

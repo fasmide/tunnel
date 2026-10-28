@@ -93,8 +93,9 @@ func (l oneShotListener) Accept() (net.Conn, error) {
 	return &oneShotConn{Conn: c, done: make(chan struct{})}, nil
 }
 
-func forwardHTTP(ctx context.Context, client *tunnel.Client, l net.Listener, network string, addresses []string, dialTimeout, drainTimeout time.Duration, plain bool, auth basicAuthList, cookies *cookieAuth, bearers bearerAuthList, out io.Writer) error {
+func forwardHTTP(ctx context.Context, client *tunnel.Client, l net.Listener, network string, addresses []string, dialTimeout, drainTimeout time.Duration, plain bool, auth basicAuthList, cookies *cookieAuth, bearers bearerAuthList, headers http.Header, out io.Writer) error {
 	proxy, transport := newHTTPProxy(network, addresses, dialTimeout)
+	enforceHeaders(proxy, headers)
 	if cookies != nil {
 		proxy.ModifyResponse = func(r *http.Response) error { cookies.filterResponse(r); return nil }
 	}
