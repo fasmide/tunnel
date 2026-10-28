@@ -43,9 +43,11 @@ func newHTTPProxy(addresses []string, dialTimeout time.Duration) (*httputil.Reve
 	proxy := &httputil.ReverseProxy{Transport: transport, Rewrite: func(r *httputil.ProxyRequest) {
 		r.SetURL(&url.URL{Scheme: "http", Host: "loopback.internal"})
 		r.Out.Host = r.In.Host
-		// Rewrite already removes inbound X-Forwarded-*; Forwarded is removed
-		// explicitly so neither standardized nor legacy spoofed chains survive.
+		// Rewrite removes inbound X-Forwarded-*; strip other client-IP headers
+		// so backends only receive our connection-derived X-Forwarded-For.
 		r.Out.Header.Del("Forwarded")
+		r.Out.Header.Del("X-Real-Ip")
+		r.Out.Header.Del("True-Client-Ip")
 		r.SetXForwarded()
 	}}
 	return proxy, transport

@@ -23,6 +23,14 @@ func TestHTTPTranslationHostAndTrustedForwarding(t *testing.T) {
 		if r.Header.Get("Forwarded") != "" || r.Header.Get("X-Forwarded-For") != "192.0.2.1" || r.Header.Get("X-Forwarded-Host") != "public.example.com" || r.Header.Get("X-Forwarded-Proto") != "https" {
 			t.Errorf("forwarding headers %v", r.Header)
 		}
+		for _, key := range []string{"X-Real-Ip", "True-Client-Ip"} {
+			if values := r.Header.Values(key); len(values) != 0 {
+				t.Errorf("untrusted %s forwarded: %v", key, values)
+			}
+		}
+		if values := r.Header.Values("X-Forwarded-For"); len(values) != 1 {
+			t.Errorf("expected one generated X-Forwarded-For, got %v", values)
+		}
 		if r.Header.Get("X-Hop") != "" {
 			t.Error("hop-by-hop header forwarded")
 		}
@@ -40,7 +48,12 @@ func TestHTTPTranslationHostAndTrustedForwarding(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "https://public.example.com/path?q=1", strings.NewReader("payload"))
 	request.RemoteAddr = "192.0.2.1:1234"
 	request.Header.Set("Forwarded", "for=spoof")
-	request.Header.Set("X-Forwarded-For", "spoof")
+	request.Header.Add("X-Forwarded-For", "spoof")
+	request.Header.Add("X-Forwarded-For", "198.51.100.1, 198.51.100.2")
+	for _, key := range []string{"X-Real-Ip", "True-Client-Ip"} {
+		request.Header.Add(key, "198.51.100.3")
+		request.Header.Add(key, "198.51.100.4")
+	}
 	request.Header.Set("X-Forwarded-Host", "evil")
 	request.Header.Set("X-Forwarded-Proto", "http")
 	request.Header.Set("Connection", "X-Hop")
