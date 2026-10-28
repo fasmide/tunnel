@@ -30,6 +30,8 @@ type config struct {
 	command, server, name, state, target, mode, cert, key, serverName, fingerprint, email string
 	targetUnixSocket                                                                      string
 	headers                                                                               http.Header
+	installUserUnit                                                                       bool
+	unitArgs                                                                              []string
 	tofu, join                                                                            bool
 	basicAuth                                                                             []string
 	basicAuthEnabled                                                                      bool
@@ -115,6 +117,7 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
   # Supply public HTTPS files, separate from daemon transport TLS:
   --mode byo --cert=server.crt --key=server.key`
 			serving := child.Flags()
+			serving.BoolVar(&c.installUserUnit, "install-user-unit", false, "install a systemd user service and exit (does not enable or start it)")
 			serving.BoolVar(&c.join, "join", false, "request access if needed and wait for approval before serving")
 			serving.StringArrayVar(&c.basicAuth, "basicauth", nil, "allow a Basic auth identity (repeatable)")
 			serving.StringArrayVar(&c.cookieAuth, "cookieauth", nil, "allow a sign-in identity (repeatable)")
@@ -185,6 +188,10 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 				return err
 			}
 			*c = validated
+			if c.installUserUnit {
+				c.unitArgs, err = userUnitArgs(cmd, *c)
+				return err
+			}
 			return nil
 		}
 		child.RunE = func(*cobra.Command, []string) error {
@@ -522,6 +529,9 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 }
 
 func executeConfig(ctx context.Context, c config, out io.Writer) error {
+	if c.installUserUnit {
+		return installUserUnit(c, out)
+	}
 	storage := tunnel.FileStorage(c.state)
 	setup, cancel := context.WithTimeout(ctx, c.setupTimeout)
 	defer cancel()

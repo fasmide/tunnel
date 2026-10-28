@@ -68,6 +68,62 @@ No fingerprint is needed once daemon trust has been saved. To submit a request w
 
 Keep the private state directory persistent. Use `--state` to select it; by default it is `$XDG_CONFIG_HOME/tunnelproxy` or `~/.config/tunnelproxy` on Linux. A hostname grant also covers its descendants; the administrator can list grants with `tunnelctl routes` and revoke access with `tunnelctl revoke IDENTITY_ID`.
 
+## Install a systemd user service
+
+Once a command works interactively, add `--install-user-unit` to save it as a
+systemd user service on Linux:
+
+```sh
+./bin/tunnelproxy serve \
+  --server tunnel.example.net \
+  --name app.tunnel.example.net \
+  --target 127.0.0.1:8080 \
+  --install-user-unit
+```
+
+This writes `~/.config/systemd/user/tunnelproxy-app.tunnel.example.net.service`
+(or under `$XDG_CONFIG_HOME`) with permissions `0600` and all arguments directly
+in `ExecStart`. It reports the unit path and attempts
+`systemctl --user daemon-reload`. **It does not enable or start the service**;
+follow the printed commands:
+
+```sh
+systemctl --user enable --now tunnelproxy-app.tunnel.example.net.service
+systemctl --user status tunnelproxy-app.tunnel.example.net.service
+journalctl --user -u tunnelproxy-app.tunnel.example.net.service
+```
+
+For startup at boot and continued operation after logout, check user lingering:
+
+```sh
+loginctl show-user "$(id -un)" -p Linger
+loginctl enable-linger "$(id -un)"
+```
+
+Enabling lingering may require administrator authorization. The installer does
+not change lingering settings.
+
+- Available on `serve` and `file-serve`, not `join`. System units are not yet
+  supported. Installation itself does not connect, enroll, or check approval;
+  the service reuses your existing identity and daemon trust. You can preserve
+  `--join` to enroll at service startup, but first-contact trust must already be
+  saved or supplied explicitly with `--fingerprint` or `--tofu` (no terminal prompt).
+- The executable path, working directory, state directory, and file/socket paths
+  are captured so the service does not depend on its startup directory. Keep
+  the executable at its installed path; avoid installing from `go run` or a
+  temporary build location.
+- Explicit passwords/tokens are required when installing authentication options.
+  Bare `--basicauth`, `--cookieauth`, and `--bearerauth` flags are rejected to
+  prevent credentials changing on each restart. Arguments, including header
+  overrides and credentials, are saved directly in the unit. Treat the unit as
+  a secret: process-argument redaction does not hide the saved `ExecStart` from
+  systemd inspection, and header overrides are not covered by argv redaction.
+- Existing units are never overwritten. To reinstall, stop the service and
+  deliberately remove or back up the reported unit file first.
+- Like any background service, it cannot inherit arbitrary environment variables
+  from the testing shell. Use a user-manager environment or a unit override if
+  additional environment configuration is needed.
+
 ## Proxy a Unix socket
 
 Use `--target-unix-socket` instead of `--target` when your upstream web server
