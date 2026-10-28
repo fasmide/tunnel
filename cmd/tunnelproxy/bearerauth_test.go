@@ -109,7 +109,7 @@ func TestBearerAuthenticatedWebSocket(t *testing.T) {
 		_, _ = io.Copy(conn, rw)
 	}))
 	defer backend.Close()
-	proxy, transport := newHTTPProxy([]string{backend.Listener.Addr().String()}, time.Second)
+	proxy, transport := newHTTPProxy("tcp", []string{backend.Listener.Addr().String()}, time.Second)
 	defer transport.CloseIdleConnections()
 	auth, err := prepareBearerAuth(config{bearerAuthEnabled: true, bearerAuth: []string{"secret"}}, io.Discard)
 	if err != nil {

@@ -43,7 +43,7 @@ func TestHTTPTranslationHostAndTrustedForwarding(t *testing.T) {
 		w.Header().Set("X-End", "done")
 	}))
 	defer backend.Close()
-	proxy, transport := newHTTPProxy([]string{backend.Listener.Addr().String()}, time.Second)
+	proxy, transport := newHTTPProxy("tcp", []string{backend.Listener.Addr().String()}, time.Second)
 	defer transport.CloseIdleConnections()
 	request := httptest.NewRequest(http.MethodPost, "https://public.example.com/path?q=1", strings.NewReader("payload"))
 	request.RemoteAddr = "192.0.2.1:1234"
@@ -84,7 +84,7 @@ func TestHTTPUpgradeBidirectionalRelay(t *testing.T) {
 		_, _ = io.Copy(conn, rw)
 	}))
 	defer backend.Close()
-	proxy, transport := newHTTPProxy([]string{backend.Listener.Addr().String()}, time.Second)
+	proxy, transport := newHTTPProxy("tcp", []string{backend.Listener.Addr().String()}, time.Second)
 	defer transport.CloseIdleConnections()
 	auth, err := parseBasicAuth("user:secret")
 	if err != nil {
@@ -134,7 +134,7 @@ func TestHTTPBackendFailureReturns502(t *testing.T) {
 	}
 	address := l.Addr().String()
 	_ = l.Close()
-	proxy, transport := newHTTPProxy([]string{address}, time.Second)
+	proxy, transport := newHTTPProxy("tcp", []string{address}, time.Second)
 	defer transport.CloseIdleConnections()
 	result := httptest.NewRecorder()
 	proxy.ServeHTTP(result, httptest.NewRequest(http.MethodGet, "http://public.example.com/", nil))

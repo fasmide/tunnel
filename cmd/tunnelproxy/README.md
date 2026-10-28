@@ -68,6 +68,24 @@ No fingerprint is needed once daemon trust has been saved. To submit a request w
 
 Keep the private state directory persistent. Use `--state` to select it; by default it is `$XDG_CONFIG_HOME/tunnelproxy` or `~/.config/tunnelproxy` on Linux. A hostname grant also covers its descendants; the administrator can list grants with `tunnelctl routes` and revoke access with `tunnelctl revoke IDENTITY_ID`.
 
+## Proxy a Unix socket
+
+Use `--target-unix-socket` instead of `--target` when your upstream web server
+listens on a Unix stream socket:
+
+```sh
+./bin/tunnelproxy serve \
+  --server tunnel.example.net \
+  --name app.tunnel.example.net \
+  --target-unix-socket /run/app.sock
+```
+
+Exactly one of `--target` and `--target-unix-socket` is required; they cannot be
+combined. Socket paths may be absolute or relative to the working directory.
+The socket must be accessible to the user running `tunnelproxy`.
+`--target-timeout` applies to socket dialing too. All serving modes support Unix
+sockets; in `raw` mode the upstream must speak TLS, just as with a TCP target.
+
 ## Serve files directly
 
 `file-serve` serves a directory through the tunnel without a local backend or
@@ -109,8 +127,8 @@ and wait for approval:
   exclusions and generated-secret behavior. TLS client authentication uses the
   same listener as reverse proxying. Linux argv credential redaction also applies.
 - Supports `acme` (default), `private`, `byo`, and `http`, with the existing TLS
-  and graceful-shutdown options. `raw`, `--target`, and `--target-timeout` do not
-  apply. HTTP mode retains the existing cleartext-auth warnings.
+  and graceful-shutdown options. `raw`, `--target`, `--target-unix-socket`, and
+  `--target-timeout` do not apply. HTTP mode retains the existing cleartext-auth warnings.
 
 This is a static file server, not a Caddy configuration engine: it does not
 execute templates, provide SPA fallbacks, or support Caddyfile directives.
@@ -127,7 +145,7 @@ Choose a public mode with `--mode`:
 | `raw` | Passes TLS unchanged to the loopback target, which owns certificates and TLS termination. SNI routing is still required; this is not arbitrary TCP forwarding. |
 | `http` | Forwards public HTTP by hostname. The QUIC tunnel is encrypted, but the browser-to-server leg is not. |
 
-Outside HTTP mode, valid public HTTP requests redirect to HTTPS. Targets must resolve exclusively to loopback addresses.
+Outside HTTP mode, valid public HTTP requests redirect to HTTPS. TCP targets must resolve exclusively to loopback addresses; Unix socket targets use the configured local path directly.
 
 ## Reconnection, shutdown, and deployment
 

@@ -207,9 +207,11 @@ func appCertificate(t *testing.T, dir string) (tls.Certificate, *x509.CertPool) 
 	return cert, roots
 }
 func TestJoinServeModesAndSignalDrain(t *testing.T) {
-	for _, variant := range []string{"http", "byo", "raw", "private", "http-auth", "byo-auth", "raw-auth", "private-auth", "http-cookie", "byo-cookie", "raw-cookie", "private-cookie", "byo-clientcert", "private-clientcert", "http-bearer", "byo-bearer", "private-bearer"} {
+	for _, variant := range []string{"http-unix", "byo-unix", "raw-unix", "private-unix", "http", "byo", "raw", "private", "http-auth", "byo-auth", "raw-auth", "private-auth", "http-cookie", "byo-cookie", "raw-cookie", "private-cookie", "byo-clientcert", "private-clientcert", "http-bearer", "byo-bearer", "private-bearer"} {
 		t.Run(variant, func(t *testing.T) {
 			mode := strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(variant, "-auth"), "-cookie"), "-clientcert"), "-bearer")
+			withUnix := strings.HasSuffix(variant, "-unix")
+			mode = strings.TrimSuffix(mode, "-unix")
 			withBearer := strings.HasSuffix(variant, "-bearer")
 			withClientCert := strings.HasSuffix(variant, "-clientcert")
 			clientCert, clientLeaf, _ := makeClientCertificate(t, nil, nil, x509.ExtKeyUsageClientAuth, false)
@@ -236,7 +238,11 @@ func TestJoinServeModesAndSignalDrain(t *testing.T) {
 				roots = x509.NewCertPool()
 				roots.AddCert(ca)
 			}
-			backend, err := net.Listen("tcp", "127.0.0.1:0")
+			network, address, targetFlag := "tcp", "127.0.0.1:0", "--target"
+			if withUnix {
+				network, address, targetFlag = "unix", filepath.Join(dir, "app.sock"), "--target-unix-socket"
+			}
+			backend, err := net.Listen(network, address)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -277,7 +283,7 @@ func TestJoinServeModesAndSignalDrain(t *testing.T) {
 				t.Fatal(err)
 			}
 			args := append([]string{"serve"}, common...)
-			args = append(args, "-t", target, "-m", mode, "--drain-timeout", "2s")
+			args = append(args, targetFlag, target, "-m", mode, "--drain-timeout", "2s")
 			if withAuth {
 				args = append(args, "--basicauth=user:secret", "--basicauth=colleague:another-secret")
 			}

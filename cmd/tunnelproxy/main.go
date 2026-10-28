@@ -28,6 +28,7 @@ import (
 
 type config struct {
 	command, server, name, state, target, mode, cert, key, serverName, fingerprint, email string
+	targetUnixSocket                                                                      string
 	tofu, join                                                                            bool
 	basicAuth                                                                             []string
 	basicAuthEnabled                                                                      bool
@@ -139,8 +140,11 @@ func newCommand(c *config, action func(config) error) *cobra.Command {
 				_ = child.MarkFlagDirname("root")
 			} else {
 				serving.StringVarP(&c.target, "target", "t", "", "loopback TCP service, e.g. 127.0.0.1:8080")
-				_ = child.MarkFlagRequired("target")
-				serving.DurationVar(&c.dialTimeout, "target-timeout", 10*time.Second, "local TCP dial deadline")
+				serving.StringVar(&c.targetUnixSocket, "target-unix-socket", "", "local Unix stream socket path, e.g. /run/app.sock")
+				child.MarkFlagsMutuallyExclusive("target", "target-unix-socket")
+				child.MarkFlagsOneRequired("target", "target-unix-socket")
+				_ = child.MarkFlagFilename("target-unix-socket")
+				serving.DurationVar(&c.dialTimeout, "target-timeout", 10*time.Second, "local target dial deadline")
 			}
 			serving.StringVarP(&c.mode, "mode", "m", "acme", "public mode: acme, private, byo, raw, http")
 			serving.StringVar(&c.cert, "cert", "", "public HTTPS certificate (PEM; byo mode)")
@@ -281,8 +285,13 @@ func validateConfig(c config) (config, error) {
 			if c.root == "" {
 				return c, errors.New("--root requires a directory")
 			}
-		} else if c.target == "" {
-			return c, errors.New("serve requires -t, --target")
+		} else {
+			if c.target != "" && c.targetUnixSocket != "" {
+				return c, errors.New("--target and --target-unix-socket are mutually exclusive")
+			}
+			if c.target == "" && c.targetUnixSocket == "" {
+				return c, errors.New("serve requires --target or --target-unix-socket")
+			}
 		}
 		switch c.mode {
 		case "acme", "private", "raw", "http":
@@ -540,6 +549,8 @@ func runServing(ctx, setup context.Context, c config, trust *tls.Config, join tu
 			return fmt.Errorf("--root: %w", err)
 		}
 		defer func() { _ = closeFiles() }()
+	} else if c.targetUnixSocket != "" {
+		addresses = []string{c.targetUnixSocket}
 	} else {
 		addresses, err = targets(setup, c.target)
 		if err != nil {
@@ -595,6 +606,11 @@ func serveClientWithHandler(ctx context.Context, c config, client *tunnel.Client
 	defer func() { _ = client.Close() }()
 	defer func() { _ = l.Close() }()
 	destination := c.target
+	network := "tcp"
+	if c.targetUnixSocket != "" {
+		destination = c.targetUnixSocket
+		network = "unix"
+	}
 	if files != nil {
 		destination = c.root
 	}
@@ -606,7 +622,7 @@ func serveClientWithHandler(ctx context.Context, c config, client *tunnel.Client
 		return err
 	}
 	if c.mode == "raw" {
-		return forward(ctx, client, l, addresses, c.dialTimeout, c.drainTimeout, out)
+		return forward(ctx, client, l, network, addresses, c.dialTimeout, c.drainTimeout, out)
 	}
 	var cookies *cookieAuth
 	if c.cookieAuthEnabled {
@@ -626,7 +642,7 @@ func serveClientWithHandler(ctx context.Context, c config, client *tunnel.Client
 		}
 		return serveHTTP(ctx, client, l, handler, c.drainTimeout, c.mode == "http", out)
 	}
-	return forwardHTTP(ctx, client, l, addresses, c.dialTimeout, c.drainTimeout, c.mode == "http", auth, cookies, bearers, out)
+	return forwardHTTP(ctx, client, l, network, addresses, c.dialTimeout, c.drainTimeout, c.mode == "http", auth, cookies, bearers, out)
 }
 
 type pair struct{ public, local net.Conn }
@@ -652,7 +668,7 @@ func (f *forwarder) abort() {
 	}
 	f.mu.Unlock()
 }
-func forward(ctx context.Context, client *tunnel.Client, l net.Listener, addresses []string, dialTimeout, drainTimeout time.Duration, out io.Writer) error {
+func forward(ctx context.Context, client *tunnel.Client, l net.Listener, network string, addresses []string, dialTimeout, drainTimeout time.Duration, out io.Writer) error {
 	// Relay cancellation is separate: a termination signal stops admission via
 	// CloseGracefully, but allocated streams must continue being accepted/served.
 	relayCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -695,16 +711,7 @@ func forward(ctx context.Context, client *tunnel.Client, l net.Listener, address
 						_ = p.local.Close()
 					}
 				}()
-				dialCtx, stop := context.WithTimeout(parent, dialTimeout)
-				defer stop()
-				var local net.Conn
-				var dialErr error
-				for _, address := range addresses {
-					local, dialErr = (&net.Dialer{}).DialContext(dialCtx, "tcp", address)
-					if dialErr == nil {
-						break
-					}
-				}
+				local, dialErr := dialBackend(parent, network, addresses, dialTimeout)
 				if dialErr != nil {
 					log.Printf("local target dial: %v", dialErr)
 					return

@@ -15,26 +15,13 @@ import (
 	"github.com/fasmide/tunnel"
 )
 
-// newHTTPProxy pins every backend dial to the validated loopback addresses.
-// There is no environment proxy, DNS re-resolution, redirect following, or
-// backend HTTP/2 negotiation. Host is preserved for existing virtual hosts.
-func newHTTPProxy(addresses []string, dialTimeout time.Duration) (*httputil.ReverseProxy, *http.Transport) {
+// newHTTPProxy pins every backend dial to validated loopback addresses or a
+// Unix socket path. There is no environment proxy, DNS re-resolution, redirect
+// following, or backend HTTP/2 negotiation. Host is preserved for virtual hosts.
+func newHTTPProxy(network string, addresses []string, dialTimeout time.Duration) (*httputil.ReverseProxy, *http.Transport) {
 	transport := &http.Transport{
-		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-			dial, stop := context.WithTimeout(ctx, dialTimeout)
-			defer stop()
-			var err error
-			for _, target := range addresses {
-				var conn net.Conn
-				conn, err = (&net.Dialer{}).DialContext(dial, "tcp", target)
-				if err == nil {
-					return conn, nil
-				}
-			}
-			if err == nil {
-				err = errors.New("no backend addresses")
-			}
-			return nil, err
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return dialBackend(ctx, network, addresses, dialTimeout)
 		},
 		MaxIdleConns: 128, MaxIdleConnsPerHost: 128, MaxConnsPerHost: 128,
 		IdleConnTimeout: 90 * time.Second, ResponseHeaderTimeout: 30 * time.Second,
@@ -106,8 +93,8 @@ func (l oneShotListener) Accept() (net.Conn, error) {
 	return &oneShotConn{Conn: c, done: make(chan struct{})}, nil
 }
 
-func forwardHTTP(ctx context.Context, client *tunnel.Client, l net.Listener, addresses []string, dialTimeout, drainTimeout time.Duration, plain bool, auth basicAuthList, cookies *cookieAuth, bearers bearerAuthList, out io.Writer) error {
-	proxy, transport := newHTTPProxy(addresses, dialTimeout)
+func forwardHTTP(ctx context.Context, client *tunnel.Client, l net.Listener, network string, addresses []string, dialTimeout, drainTimeout time.Duration, plain bool, auth basicAuthList, cookies *cookieAuth, bearers bearerAuthList, out io.Writer) error {
+	proxy, transport := newHTTPProxy(network, addresses, dialTimeout)
 	if cookies != nil {
 		proxy.ModifyResponse = func(r *http.Response) error { cookies.filterResponse(r); return nil }
 	}

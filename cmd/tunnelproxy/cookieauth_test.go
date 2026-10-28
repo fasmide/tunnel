@@ -254,7 +254,7 @@ func TestCookieAuthenticatedWebSocket(t *testing.T) {
 		_, _ = io.Copy(conn, rw)
 	}))
 	defer backend.Close()
-	proxy, transport := newHTTPProxy([]string{backend.Listener.Addr().String()}, time.Second)
+	proxy, transport := newHTTPProxy("tcp", []string{backend.Listener.Addr().String()}, time.Second)
 	defer transport.CloseIdleConnections()
 	a := testCookieAuth(t, false)
 	front := httptest.NewServer(a.wrap(proxy))
